@@ -1,0 +1,321 @@
+{% extends "base.html" %}
+{% block title %}{{ project.title }} · AIvideo{% endblock %}
+{% block content %}
+<nav class="crumb">
+  <a href="/">← Tất cả dự án</a>
+</nav>
+
+<section class="editor">
+  <div class="editor-col">
+    <form class="editor-form" method="post" action="/projects/{{ project.id }}/save" id="save-form">
+      <div class="editor-main">
+        <label class="field">
+          <span>Tên dự án</span>
+          <input type="text" name="title" value="{{ project.title }}" required />
+        </label>
+        <label class="field">
+          <span>Kịch bản</span>
+          <textarea name="script" rows="12" placeholder="1. Câu mô tả ảnh bên trái (số 1 không bị đọc).&#10;&#10;2. Câu mô tả ảnh bên phải.&#10;&#10;Câu không có số — nhân vật đứng giữa.">{{ project.script }}</textarea>
+        </label>
+
+        <div class="row wrap">
+          <label class="field grow">
+            <span>Giọng đọc</span>
+            <select name="voice">
+              {% for v in voices %}
+              <option value="{{ v.id }}" {% if project.voice == v.id %}selected{% endif %}>{{ v.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="field grow">
+            <span>Tốc độ video / giọng đọc</span>
+            {% set sp = (project.speed if project.speed is not none else 1.0)|float %}
+            <select name="speed">
+              <option value="0.75" {% if sp < 0.8 %}selected{% endif %}>0.75× — chậm</option>
+              <option value="0.85" {% if sp >= 0.8 and sp < 0.93 %}selected{% endif %}>0.85× — hơi chậm</option>
+              <option value="1" {% if sp >= 0.93 and sp < 1.08 %}selected{% endif %}>1.0× — bình thường</option>
+              <option value="1.15" {% if sp >= 1.08 and sp < 1.2 %}selected{% endif %}>1.15× — hơi nhanh</option>
+              <option value="1.25" {% if sp >= 1.2 and sp < 1.33 %}selected{% endif %}>1.25× — nhanh</option>
+              <option value="1.4" {% if sp >= 1.33 %}selected{% endif %}>1.4× — rất nhanh</option>
+            </select>
+          </label>
+          <label class="field grow">
+            <span>Vị trí nhân vật</span>
+            <select name="character_position">
+              {% for p in positions %}
+              <option value="{{ p.id }}" {% if project.character_position == p.id %}selected{% endif %}>{{ p.label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="field grow">
+            <span>Brand (tuỳ chọn)</span>
+            <input type="text" name="brand_name" value="{{ project.brand_name or '' }}" placeholder="Tên thương hiệu" maxlength="40" />
+          </label>
+        </div>
+        <div class="row wrap">
+          <label class="field grow">
+            <span>Ghi chú trên ảnh 1 (trái)</span>
+            <input type="text" name="caption_1" value="{{ project.caption_1 or '' }}" placeholder="VD: Rắn cạp nia" maxlength="60" />
+          </label>
+          <label class="field grow">
+            <span>Ghi chú trên ảnh 2 (phải)</span>
+            <input type="text" name="caption_2" value="{{ project.caption_2 or '' }}" placeholder="VD: Rắn cạp long" maxlength="60" />
+          </label>
+        </div>
+
+        <div class="frame-controls">
+          <div class="panel-head">
+            <h3>Khung hình ảnh 1 &amp; 2</h3>
+            <span class="hint">Chỉnh mode / zoom / vị trí cắt cho vừa khung video</span>
+          </div>
+          {% set f1 = project.frame_1 or {} %}
+          {% set f2 = project.frame_2 or {} %}
+          <div class="frame-grid">
+            <div class="frame-card">
+              <strong>Ảnh 1 (trái)</strong>
+              <label class="field">
+                <span>Cách fit</span>
+                <select name="frame_1_mode">
+                  <option value="cover" {% if f1.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
+                  <option value="contain" {% if f1.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Zoom (1 → 2.5)</span>
+                <input type="range" name="frame_1_zoom" min="1" max="2.5" step="0.05" value="{{ f1.zoom or 1 }}" />
+              </label>
+              <label class="field">
+                <span>Focus ngang (trái → phải)</span>
+                <input type="range" name="frame_1_x" min="0" max="1" step="0.01" value="{{ f1.x if f1.x is not none else 0.5 }}" />
+              </label>
+              <label class="field">
+                <span>Focus dọc (trên → dưới)</span>
+                <input type="range" name="frame_1_y" min="0" max="1" step="0.01" value="{{ f1.y if f1.y is not none else 0.5 }}" />
+              </label>
+            </div>
+            <div class="frame-card">
+              <strong>Ảnh 2 (phải)</strong>
+              <label class="field">
+                <span>Cách fit</span>
+                <select name="frame_2_mode">
+                  <option value="cover" {% if f2.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
+                  <option value="contain" {% if f2.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Zoom (1 → 2.5)</span>
+                <input type="range" name="frame_2_zoom" min="1" max="2.5" step="0.05" value="{{ f2.zoom or 1 }}" />
+              </label>
+              <label class="field">
+                <span>Focus ngang (trái → phải)</span>
+                <input type="range" name="frame_2_x" min="0" max="1" step="0.01" value="{{ f2.x if f2.x is not none else 0.5 }}" />
+              </label>
+              <label class="field">
+                <span>Focus dọc (trên → dưới)</span>
+                <input type="range" name="frame_2_y" min="0" max="1" step="0.01" value="{{ f2.y if f2.y is not none else 0.5 }}" />
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="checks">
+          <label class="check">
+            <input type="checkbox" name="karaoke" {% if project.karaoke %}checked{% endif %} />
+            Phụ đề karaoke
+          </label>
+          <label class="check">
+            <input type="checkbox" name="clean_export" {% if project.clean_export %}checked{% endif %} />
+            Xuất sạch (không logo AIvideo)
+          </label>
+          <label class="check">
+            <input type="checkbox" name="auto_pose" {% if project.auto_pose %}checked{% endif %} />
+            Pose theo dấu 1./2. (không đọc số)
+          </label>
+        </div>
+
+        <input type="hidden" name="character_id" id="character_id" value="{{ project.character_id }}" />
+
+        <div class="char-picker">
+          <div class="panel-head">
+            <h3>Nhân vật</h3>
+            <span class="hint">Viết <code>1.</code>/<code>2.</code> để chỉ hướng (không bị đọc). Không số = giữa</span>
+          </div>
+          <div class="char-grid" id="char-grid">
+            {% for c in characters %}
+            <div class="char-card-wrap {% if project.character_id == c.id %}active{% endif %}">
+              <button type="button" class="char-card {% if project.character_id == c.id %}active{% endif %}"
+                data-id="{{ c.id }}" title="{{ c.label }}">
+                <img src="{{ c.url }}" alt="{{ c.label }}" />
+                <span>{{ c.label }}{% if c.kind == 'animated' %} · động{% endif %}</span>
+              </button>
+              {% if c.file and c.file.startswith('custom/') %}
+              <form class="char-delete-form" method="post" action="/characters/{{ c.id }}/delete"
+                onsubmit="return confirm('Xóa nhân vật này?');">
+                <input type="hidden" name="project_id" value="{{ project.id }}" />
+                <button type="submit" class="char-delete" title="Xóa nhân vật">×</button>
+              </form>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div class="row">
+          <button type="submit" class="btn ghost">Lưu dự án</button>
+        </div>
+      </div>
+    </form>
+
+    <form class="panel upload-char" method="post" action="/characters/upload" enctype="multipart/form-data">
+      <input type="hidden" name="project_id" value="{{ project.id }}" />
+      <label class="field">
+        <span>Upload sprite sheet nhân vật (5 pose ngang → ảnh động rõ nét)</span>
+        <input type="text" name="label" placeholder="Tên nhân vật" />
+      </label>
+      <label class="check" style="margin-bottom:0.6rem">
+        <input type="checkbox" name="as_sheet" checked />
+        Đây là sheet nhiều pose (tự cắt 5 pose ngang)
+      </label>
+      <label class="check" style="margin-bottom:0.6rem">
+        <input type="checkbox" name="bg_removed" checked />
+        Đã bỏ nền (PNG trong suốt) — giữ nét, không dùng rembg
+      </label>
+      <div class="row">
+        <input type="file" name="file" accept="image/png,image/webp,image/jpeg" required />
+        <button type="submit" class="btn ghost">Tải lên &amp; tạo động</button>
+      </div>
+    </form>
+
+    <div class="panel timeline-panel" id="sfx-panel" data-ready="{{ '1' if project.status == 'ready' and project.output_file else '0' }}">
+      <div class="panel-head">
+        <h3>2) Timeline SFX (sau khi Render)</h3>
+        <span class="hint">Render xong → video vào đây → kéo SFX → Xuất lại</span>
+      </div>
+      {% if not (project.status == 'ready' and project.output_file) %}
+      <p class="empty-sm" id="sfx-locked-hint">Chưa có video. Bấm <strong>Render video 9:16</strong> trước, video sẽ tự nhảy vào timeline này.</p>
+      {% endif %}
+      <div class="timeline-video-wrap">
+        <video id="timeline-video" playsinline
+          {% if project.status == 'ready' and project.output_file %}
+          src="/projects/{{ project.id }}/video?t={{ project.updated_at }}"
+          {% endif %}
+          controls></video>
+      </div>
+      <div class="sfx-palette" id="sfx-palette">
+        {% for s in sfx_list %}
+        <button type="button" class="sfx-chip" draggable="true"
+          data-sfx-id="{{ s.id }}" data-label="{{ s.label }}" data-color="{{ s.color }}" data-dur="{{ s.duration }}"
+          style="--chip: {{ s.color }}" title="{{ s.cat or '' }}">
+          {{ s.label }}
+        </button>
+        {% endfor %}
+      </div>
+      <div class="timeline" id="sfx-timeline" data-duration="{{ timeline_duration }}">
+        <div class="timeline-ruler" id="timeline-ruler"></div>
+        <div class="timeline-track" id="timeline-track"></div>
+        <div class="timeline-playhead" id="timeline-playhead"></div>
+      </div>
+      <div class="row timeline-actions">
+        <button type="button" class="btn primary" id="sfx-export"
+          {% if not (project.status == 'ready' and project.output_file) %}disabled{% endif %}>
+          Xuất video + SFX
+        </button>
+        <button type="button" class="btn ghost" id="sfx-save">Lưu timeline</button>
+        <button type="button" class="btn ghost" id="sfx-clear">Xóa hết SFX</button>
+        <span class="hint" id="sfx-save-status"></span>
+      </div>
+    </div>
+  </div>
+
+  <aside class="side">
+    <div class="panel">
+      <h2>Ảnh cảnh</h2>
+      <p class="hint">Ảnh 1 = trái, ảnh 2 = phải (layout so sánh).</p>
+      <form method="post" action="/projects/{{ project.id }}/images" enctype="multipart/form-data" class="upload">
+        <input type="file" name="files" accept="image/*" multiple required />
+        <button type="submit" class="btn ghost">Thêm ảnh</button>
+      </form>
+      {% if project.images %}
+      <ul class="thumbs">
+        {% for img in project.images %}
+        <li>
+          <img src="/projects/{{ project.id }}/images/{{ img.name }}" alt="{{ img.original }}" />
+          <form method="post" action="/projects/{{ project.id }}/images/{{ img.name }}/delete">
+            <button type="submit" class="x" title="Xóa">×</button>
+          </form>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="empty-sm">Chưa có ảnh — vẫn render được.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel">
+      <h2>Cảnh đã tách</h2>
+      {% if scenes %}
+      <ol class="scenes">
+        {% for s in scenes %}
+        <li>
+          <span>{{ s.index }}</span>
+          <div>
+            <small class="hint" style="margin:0">
+              {% if s.target == 'point_1' %}→ chỉ ảnh 1 (trái)
+              {% elif s.target == 'point_2' %}→ chỉ ảnh 2 (phải)
+              {% else %}→ giữa{% endif %}
+              · không đọc số
+            </small>
+            <div>{{ s.text }}</div>
+          </div>
+        </li>
+        {% endfor %}
+      </ol>
+      {% else %}
+      <p class="empty-sm">Lưu kịch bản để xem các cảnh.</p>
+      {% endif %}
+    </div>
+
+    <div class="panel render-panel" data-status="{{ project.status }}">
+      <h2>Render chuyên nghiệp</h2>
+      <p class="status-line">Trạng thái: <strong id="status-text">{{ project.status }}</strong></p>
+      {% if project.error %}
+      <pre class="error">{{ project.error }}</pre>
+      {% endif %}
+      <ul class="render-checklist">
+        <li>{% if project.karaoke %}✓{% else %}○{% endif %} Karaoke</li>
+        <li>{% if project.clean_export %}✓{% else %}○{% endif %} Xuất sạch</li>
+        <li>✓ Nhân vật: {{ project.character_id }}</li>
+        <li>○ SFX thêm sau ở timeline</li>
+      </ul>
+      <form method="post" action="/projects/{{ project.id }}/render" id="render-form" class="row">
+        <button type="submit" class="btn primary" id="render-btn"
+          {% if project.status in ['queued', 'rendering', 'paused'] %}disabled{% endif %}>
+          {% if project.status in ['queued', 'rendering', 'paused'] %}Đang render…{% else %}1) Render video 9:16{% endif %}
+        </button>
+        <button type="button" class="btn ghost" id="pause-btn"
+          {% if project.status not in ['queued', 'rendering', 'paused'] %}disabled{% endif %}>
+          {% if project.status == 'paused' %}Tiếp tục render{% else %}Tạm dừng render{% endif %}
+        </button>
+      </form>
+      <div id="video-box" class="{% if project.status != 'ready' or not project.output_file %}hidden{% endif %}">
+        <video id="preview-video" controls playsinline src="/projects/{{ project.id }}/video?t={{ project.updated_at }}"></video>
+        <a class="btn ghost" href="/projects/{{ project.id }}/download">Tải MP4</a>
+      </div>
+    </div>
+
+    <form method="post" action="/projects/{{ project.id }}/delete" onsubmit="return confirm('Xóa dự án này?');">
+      <button type="submit" class="link-danger">Xóa dự án</button>
+    </form>
+  </aside>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.AIVIDEO_PROJECT_ID = {{ project.id|tojson }};
+  window.AIVIDEO_STATUS = {{ project.status|tojson }};
+  window.AIVIDEO_SFX_CLIPS = {{ project.sfx_clips|tojson }};
+  window.AIVIDEO_DURATION = {{ timeline_duration }};
+</script>
+<script src="/static/js/app.js"></script>
+{% endblock %}

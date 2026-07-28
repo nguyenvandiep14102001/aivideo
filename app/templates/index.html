@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}AIvideo — Studio local{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-copy">
+    <p class="eyebrow">Studio video dọc trên máy bạn</p>
+    <h1>Từ kịch bản đến <em>video 9:16</em>.</h1>
+    <p class="lede">Dán kịch bản, thêm ảnh, chọn giọng đọc — AIvideo ghép phụ đề và render ngay trên máy, không cần cloud.</p>
+    <form class="new-project" method="post" action="/projects">
+      <input type="text" name="title" placeholder="Tên dự án…" maxlength="80" />
+      <button type="submit">Tạo dự án</button>
+    </form>
+  </div>
+  <div class="hero-stage" aria-hidden="true">
+    <div class="phone">
+      <div class="phone-screen">
+        <span class="tag">CC · VOICE-SYNC</span>
+        <p>So sánh trước / sau chỉ với vài click.</p>
+        <div class="bars">
+          <i></i><i></i><i></i><i></i>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="projects">
+  <div class="section-head">
+    <h2>Dự án trên máy</h2>
+    <p>Mọi file nằm trong thư mục <code>data/projects</code>.</p>
+  </div>
+  {% if projects %}
+  <ul class="project-list">
+    {% for p in projects %}
+    <li>
+      <a href="/projects/{{ p.id }}">
+        <strong>{{ p.title }}</strong>
+        <span class="status status-{{ p.status }}">{{ p.status }}</span>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">Chưa có dự án. Tạo cái đầu tiên ở trên.</p>
+  {% endif %}
+</section>
+{% endblock %}
