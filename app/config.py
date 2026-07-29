@@ -10,7 +10,7 @@ TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
 
 VIDEO_WIDTH = 1080
 VIDEO_HEIGHT = 1920
-VIDEO_FPS = 30
+VIDEO_FPS = 24  # default balanced; project can override 20/24/30
 
 DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
 VOICES = [

@@ -40,6 +40,15 @@
             </select>
           </label>
           <label class="field grow">
+            <span>Tốc độ render (FPS)</span>
+            {% set rf = (project.render_fps if project.render_fps is not none else 24)|int %}
+            <select name="render_fps">
+              <option value="20" {% if rf <= 20 %}selected{% endif %}>20 FPS — nhanh hơn</option>
+              <option value="24" {% if rf == 24 %}selected{% endif %}>24 FPS — cân bằng</option>
+              <option value="30" {% if rf >= 30 %}selected{% endif %}>30 FPS — mượt hơn (chậm)</option>
+            </select>
+          </label>
+          <label class="field grow">
             <span>Vị trí nhân vật</span>
             <select name="character_position">
               {% for p in positions %}
@@ -63,56 +72,90 @@
           </label>
         </div>
 
-        <div class="frame-controls">
+        <div class="frame-controls" id="frame-controls">
           <div class="panel-head">
             <h3>Khung hình ảnh 1 &amp; 2</h3>
-            <span class="hint">Chỉnh mode / zoom / vị trí cắt cho vừa khung video</span>
+            <span class="hint">Demo live — chỉnh mode / zoom / focus trước khi render</span>
           </div>
           {% set f1 = project.frame_1 or {} %}
           {% set f2 = project.frame_2 or {} %}
+          {% set img1 = project.images[0] if project.images and project.images|length > 0 else none %}
+          {% set img2 = project.images[1] if project.images and project.images|length > 1 else img1 %}
+          <div class="frame-preview-stage" id="frame-preview-stage" aria-label="Demo khung ảnh">
+            <div class="frame-preview-panel">
+              <div class="frame-preview-viewport" data-frame="1">
+                {% if img1 %}
+                <img class="frame-preview-img" data-frame="1"
+                     src="/projects/{{ project.id }}/images/{{ img1.name }}"
+                     alt="Preview ảnh 1" />
+                {% else %}
+                <div class="frame-preview-empty">Chưa có ảnh 1</div>
+                {% endif %}
+              </div>
+              <span class="frame-preview-label">Ảnh 1 (trái)</span>
+            </div>
+            <div class="frame-preview-panel">
+              <div class="frame-preview-viewport" data-frame="2">
+                {% if img2 %}
+                <img class="frame-preview-img" data-frame="2"
+                     src="/projects/{{ project.id }}/images/{{ img2.name }}"
+                     alt="Preview ảnh 2" />
+                {% else %}
+                <div class="frame-preview-empty">Chưa có ảnh 2</div>
+                {% endif %}
+              </div>
+              <span class="frame-preview-label">Ảnh 2 (phải)</span>
+            </div>
+          </div>
           <div class="frame-grid">
-            <div class="frame-card">
+            <div class="frame-card" data-frame-card="1">
               <strong>Ảnh 1 (trái)</strong>
               <label class="field">
                 <span>Cách fit</span>
-                <select name="frame_1_mode">
+                <select name="frame_1_mode" data-frame-ctrl="1" data-key="mode">
                   <option value="cover" {% if f1.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
                   <option value="contain" {% if f1.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
                 </select>
               </label>
               <label class="field">
-                <span>Zoom (1 → 2.5)</span>
-                <input type="range" name="frame_1_zoom" min="1" max="2.5" step="0.05" value="{{ f1.zoom or 1 }}" />
+                <span>Zoom (1 → 2.5) <em class="frame-val" data-frame-val="1-zoom">{{ '%.2f'|format(f1.zoom or 1) }}</em></span>
+                <input type="range" name="frame_1_zoom" min="1" max="2.5" step="0.05" value="{{ f1.zoom or 1 }}"
+                       data-frame-ctrl="1" data-key="zoom" />
               </label>
               <label class="field">
-                <span>Focus ngang (trái → phải)</span>
-                <input type="range" name="frame_1_x" min="0" max="1" step="0.01" value="{{ f1.x if f1.x is not none else 0.5 }}" />
+                <span>Focus ngang (trái → phải) <em class="frame-val" data-frame-val="1-x">{{ '%.2f'|format(f1.x if f1.x is not none else 0.5) }}</em></span>
+                <input type="range" name="frame_1_x" min="0" max="1" step="0.01" value="{{ f1.x if f1.x is not none else 0.5 }}"
+                       data-frame-ctrl="1" data-key="x" />
               </label>
               <label class="field">
-                <span>Focus dọc (trên → dưới)</span>
-                <input type="range" name="frame_1_y" min="0" max="1" step="0.01" value="{{ f1.y if f1.y is not none else 0.5 }}" />
+                <span>Focus dọc (trên → dưới) <em class="frame-val" data-frame-val="1-y">{{ '%.2f'|format(f1.y if f1.y is not none else 0.5) }}</em></span>
+                <input type="range" name="frame_1_y" min="0" max="1" step="0.01" value="{{ f1.y if f1.y is not none else 0.5 }}"
+                       data-frame-ctrl="1" data-key="y" />
               </label>
             </div>
-            <div class="frame-card">
+            <div class="frame-card" data-frame-card="2">
               <strong>Ảnh 2 (phải)</strong>
               <label class="field">
                 <span>Cách fit</span>
-                <select name="frame_2_mode">
+                <select name="frame_2_mode" data-frame-ctrl="2" data-key="mode">
                   <option value="cover" {% if f2.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
                   <option value="contain" {% if f2.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
                 </select>
               </label>
               <label class="field">
-                <span>Zoom (1 → 2.5)</span>
-                <input type="range" name="frame_2_zoom" min="1" max="2.5" step="0.05" value="{{ f2.zoom or 1 }}" />
+                <span>Zoom (1 → 2.5) <em class="frame-val" data-frame-val="2-zoom">{{ '%.2f'|format(f2.zoom or 1) }}</em></span>
+                <input type="range" name="frame_2_zoom" min="1" max="2.5" step="0.05" value="{{ f2.zoom or 1 }}"
+                       data-frame-ctrl="2" data-key="zoom" />
               </label>
               <label class="field">
-                <span>Focus ngang (trái → phải)</span>
-                <input type="range" name="frame_2_x" min="0" max="1" step="0.01" value="{{ f2.x if f2.x is not none else 0.5 }}" />
+                <span>Focus ngang (trái → phải) <em class="frame-val" data-frame-val="2-x">{{ '%.2f'|format(f2.x if f2.x is not none else 0.5) }}</em></span>
+                <input type="range" name="frame_2_x" min="0" max="1" step="0.01" value="{{ f2.x if f2.x is not none else 0.5 }}"
+                       data-frame-ctrl="2" data-key="x" />
               </label>
               <label class="field">
-                <span>Focus dọc (trên → dưới)</span>
-                <input type="range" name="frame_2_y" min="0" max="1" step="0.01" value="{{ f2.y if f2.y is not none else 0.5 }}" />
+                <span>Focus dọc (trên → dưới) <em class="frame-val" data-frame-val="2-y">{{ '%.2f'|format(f2.y if f2.y is not none else 0.5) }}</em></span>
+                <input type="range" name="frame_2_y" min="0" max="1" step="0.01" value="{{ f2.y if f2.y is not none else 0.5 }}"
+                       data-frame-ctrl="2" data-key="y" />
               </label>
             </div>
           </div>
@@ -278,6 +321,17 @@
     <div class="panel render-panel" data-status="{{ project.status }}">
       <h2>Render chuyên nghiệp</h2>
       <p class="status-line">Trạng thái: <strong id="status-text">{{ project.status }}</strong></p>
+      <div class="render-progress {% if project.status not in ['queued', 'rendering', 'paused'] %}hidden{% endif %}"
+           id="render-progress"
+           {% if project.status not in ['queued', 'rendering', 'paused'] %}hidden{% endif %}>
+        <div class="render-progress-track">
+          <div class="render-progress-bar" id="render-progress-bar" style="width: 0%"></div>
+        </div>
+        <div class="render-progress-meta">
+          <strong id="render-progress-pct">0%</strong>
+          <span id="render-progress-msg">Đang chờ…</span>
+        </div>
+      </div>
       {% if project.error %}
       <pre class="error">{{ project.error }}</pre>
       {% endif %}
@@ -317,5 +371,5 @@
   window.AIVIDEO_SFX_CLIPS = {{ project.sfx_clips|tojson }};
   window.AIVIDEO_DURATION = {{ timeline_duration }};
 </script>
-<script src="/static/js/app.js"></script>
+<script src="/static/js/app.js?v=3"></script>
 {% endblock %}

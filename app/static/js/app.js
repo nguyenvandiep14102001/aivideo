@@ -7,6 +7,10 @@
   const renderBtn = document.getElementById("render-btn");
   const pauseBtn = document.getElementById("pause-btn");
   const videoBox = document.getElementById("video-box");
+  const progressWrap = document.getElementById("render-progress");
+  const progressBar = document.getElementById("render-progress-bar");
+  const progressPct = document.getElementById("render-progress-pct");
+  const progressMsg = document.getElementById("render-progress-msg");
   const charInput = document.getElementById("character_id");
   const track = document.getElementById("timeline-track");
   const timeline = document.getElementById("sfx-timeline");
@@ -17,11 +21,13 @@
   const timelineVideo = document.getElementById("timeline-video");
   const previewVideo = document.getElementById("preview-video");
   const sfxPanel = document.getElementById("sfx-panel");
+  const renderForm = document.getElementById("render-form");
 
   let duration = Math.max(4, Number(window.AIVIDEO_DURATION) || 12);
   let clips = Array.isArray(window.AIVIDEO_SFX_CLIPS)
     ? window.AIVIDEO_SFX_CLIPS.map((c) => ({ ...c }))
     : [];
+  let polling = false;
 
   function uid() {
     return Math.random().toString(16).slice(2, 10);
@@ -44,6 +50,21 @@
       const canPause = running || paused;
       pauseBtn.disabled = !canPause;
       pauseBtn.textContent = paused ? "Tiếp tục render" : "Tạm dừng render";
+    }
+    if (progressWrap) {
+      const show = running || paused;
+      progressWrap.classList.toggle("hidden", !show);
+      if (show) progressWrap.removeAttribute("hidden");
+      else progressWrap.setAttribute("hidden", "");
+    }
+  }
+
+  function updateProgress(percent, message) {
+    const pct = Math.max(0, Math.min(100, Number(percent) || 0));
+    if (progressBar) progressBar.style.width = `${pct}%`;
+    if (progressPct) progressPct.textContent = `${Math.round(pct)}%`;
+    if (progressMsg) {
+      progressMsg.textContent = message || (pct > 0 ? "Đang render…" : "Đang chờ…");
     }
   }
 
@@ -145,6 +166,44 @@
       audio.play().catch(() => {});
     } catch (_) {}
     renderClips();
+  }
+
+  async function poll() {
+    if (polling) return;
+    if (!["queued", "rendering", "paused"].includes(status)) return;
+    polling = true;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/status`);
+      const data = await res.json();
+      status = data.status;
+      if (statusText) statusText.textContent = status;
+      updateProgress(data.progress, data.progress_message || "");
+      updateRenderControls();
+      if (status === "ready") {
+        updateProgress(100, "Hoàn tất");
+        const url = `/projects/${projectId}/video?t=${Date.now()}`;
+        if (data.duration_sec) duration = Number(data.duration_sec) || duration;
+        loadVideoIntoTimeline(url);
+        if (videoBox) {
+          videoBox.classList.remove("hidden");
+          const v = videoBox.querySelector("video");
+          if (v) v.src = url;
+        }
+        if (saveStatus) {
+          saveStatus.textContent = "Video đã vào timeline — kéo SFX rồi bấm Xuất video + SFX";
+        }
+        if (sfxPanel) sfxPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+        setTimeout(() => updateRenderControls(), 2000);
+        polling = false;
+        return;
+      }
+      if (status === "error") {
+        location.reload();
+        return;
+      }
+    } catch (_) {}
+    polling = false;
+    setTimeout(poll, 500);
   }
 
   document.querySelectorAll(".char-card").forEach((btn) => {
@@ -283,50 +342,134 @@
         updateRenderControls();
         poll();
       } catch (err) {
-        if (saveStatus) saveStatus.textContent = `Lỗi ${status === "paused" ? "tiếp tục" : "tạm dừng"}: ${err.message || err}`;
+        if (saveStatus) {
+          saveStatus.textContent = `Lỗi ${status === "paused" ? "tiếp tục" : "tạm dừng"}: ${err.message || err}`;
+        }
         updateRenderControls();
       }
     });
   }
 
+  if (renderForm) {
+    renderForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (["queued", "rendering", "paused"].includes(status)) return;
+      status = "queued";
+      if (statusText) statusText.textContent = "queued";
+      updateProgress(1, "Đang xếp hàng…");
+      updateRenderControls();
+      poll();
+      try {
+        const res = await fetch(`/api/projects/${projectId}/render`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || "Không bắt đầu được render");
+        status = data.status || "queued";
+        if (statusText) statusText.textContent = status;
+        updateProgress(data.progress || 1, data.progress_message || "Đang xếp hàng…");
+        updateRenderControls();
+        poll();
+      } catch (err) {
+        status = "error";
+        if (statusText) statusText.textContent = "error";
+        updateProgress(0, err.message || "Lỗi render");
+        updateRenderControls();
+        alert(err.message || "Lỗi render");
+      }
+    });
+  }
+
+  // Live demo for image frame 1 & 2 (matches renderer _fit_framed)
+  function clamp(n, a, b) {
+    return Math.max(a, Math.min(b, n));
+  }
+
+  function applyFramePreview(side) {
+    const viewport = document.querySelector(`.frame-preview-viewport[data-frame="${side}"]`);
+    const img = document.querySelector(`.frame-preview-img[data-frame="${side}"]`);
+    if (!viewport || !img) return;
+    const srcW = img.naturalWidth;
+    const srcH = img.naturalHeight;
+    if (!srcW || !srcH) return;
+
+    const boxW = viewport.clientWidth;
+    const boxH = viewport.clientHeight;
+    if (!boxW || !boxH) return;
+
+    const modeEl = document.querySelector(`[data-frame-ctrl="${side}"][data-key="mode"]`);
+    const zoomEl = document.querySelector(`[data-frame-ctrl="${side}"][data-key="zoom"]`);
+    const xEl = document.querySelector(`[data-frame-ctrl="${side}"][data-key="x"]`);
+    const yEl = document.querySelector(`[data-frame-ctrl="${side}"][data-key="y"]`);
+    const mode = ((modeEl && modeEl.value) || "cover").toLowerCase();
+    const zoom = clamp(Number(zoomEl && zoomEl.value) || 1, 1, 3);
+    const fx = clamp(Number(xEl && xEl.value), 0, 1);
+    const fy = clamp(Number(yEl && yEl.value), 0, 1);
+
+    const setVal = (key, val) => {
+      const el = document.querySelector(`[data-frame-val="${side}-${key}"]`);
+      if (el) el.textContent = Number(val).toFixed(2);
+    };
+    setVal("zoom", zoom);
+    setVal("x", fx);
+    setVal("y", fy);
+
+    let scale;
+    if (mode === "contain") {
+      scale = Math.min(boxW / srcW, boxH / srcH) * zoom;
+    } else {
+      scale = Math.max(boxW / srcW, boxH / srcH) * zoom;
+    }
+    const newW = Math.max(1, srcW * scale);
+    const newH = Math.max(1, srcH * scale);
+
+    let left;
+    let top;
+    if (mode === "contain") {
+      left = newW <= boxW ? (boxW - newW) / 2 : -(newW - boxW) * fx;
+      top = newH <= boxH ? (boxH - newH) / 2 : -(newH - boxH) * fy;
+      viewport.style.background = "#ebebee";
+    } else {
+      left = -Math.max(0, newW - boxW) * fx;
+      top = -Math.max(0, newH - boxH) * fy;
+      viewport.style.background = "#111";
+    }
+
+    img.style.width = `${newW}px`;
+    img.style.height = `${newH}px`;
+    img.style.left = `${left}px`;
+    img.style.top = `${top}px`;
+  }
+
+  function refreshFramePreviews() {
+    applyFramePreview(1);
+    applyFramePreview(2);
+  }
+
+  document.querySelectorAll("[data-frame-ctrl]").forEach((el) => {
+    const evt = el.tagName === "SELECT" ? "change" : "input";
+    el.addEventListener(evt, () => {
+      const side = el.getAttribute("data-frame-ctrl");
+      applyFramePreview(side);
+    });
+  });
+
+  document.querySelectorAll(".frame-preview-img").forEach((img) => {
+    const run = () => applyFramePreview(img.getAttribute("data-frame"));
+    if (img.complete && img.naturalWidth) run();
+    else img.addEventListener("load", run);
+  });
+
+  window.addEventListener("resize", () => {
+    clearTimeout(window.__framePreviewResize);
+    window.__framePreviewResize = setTimeout(refreshFramePreviews, 80);
+  });
+
+  refreshFramePreviews();
+
   buildRuler();
   renderClips();
   updateRenderControls();
-
-  // Render does NOT need SFX — plain submit
-  async function poll() {
-    if (!["queued", "rendering", "paused"].includes(status)) return;
-    try {
-      const res = await fetch(`/api/projects/${projectId}/status`);
-      const data = await res.json();
-      status = data.status;
-      if (statusText) statusText.textContent = status;
-      updateRenderControls();
-      if (status === "ready") {
-        const url = `/projects/${projectId}/video?t=${Date.now()}`;
-        if (data.duration_sec) {
-          duration = Number(data.duration_sec) || duration;
-        }
-        loadVideoIntoTimeline(url);
-        if (videoBox) {
-          videoBox.classList.remove("hidden");
-          const v = videoBox.querySelector("video");
-          if (v) v.src = url;
-        }
-        if (saveStatus) {
-          saveStatus.textContent = "Video đã vào timeline — kéo SFX rồi bấm Xuất video + SFX";
-        }
-        // Scroll timeline into view
-        if (sfxPanel) sfxPanel.scrollIntoView({ behavior: "smooth", block: "start" });
-        return;
-      }
-      if (status === "error") {
-        location.reload();
-        return;
-      }
-    } catch (_) {}
-    setTimeout(poll, 1500);
+  if (["queued", "rendering", "paused"].includes(status)) {
+    updateProgress(1, "Đang render…");
+    poll();
   }
-
-  if (["queued", "rendering", "paused"].includes(status)) poll();
 })();

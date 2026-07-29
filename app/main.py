@@ -25,6 +25,85 @@ app = FastAPI(title="AIvideo", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 RENDER_PAUSE_EVENTS: dict[str, asyncio.Event] = {}
+RENDER_PROGRESS: dict[str, dict] = {}
+
+
+def _set_render_progress(
+    project_id: str,
+    percent: float,
+    message: str = "",
+    *,
+    persist: bool = True,
+) -> None:
+    pct = max(0, min(100, int(round(percent))))
+    payload = {"percent": pct, "message": message or ""}
+    RENDER_PROGRESS[project_id] = payload
+    if not persist:
+        return
+    try:
+        folder = project_store.project_dir(project_id)
+        out = folder / "output"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "progress.json").write_text(
+            json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _queue_render(project_id: str, background_tasks: BackgroundTasks) -> dict:
+    """Shared start-render logic for form + API."""
+    project = project_store.load_project(project_id)
+    if not (project.get("script") or "").strip():
+        project["status"] = "error"
+        project["error"] = (
+            "Kịch bản đang trống. Nhập nội dung → bấm Lưu dự án → rồi Render."
+        )
+        project_store.save_project(project)
+        return {"ok": False, "status": "error", "error": project["error"], "progress": 0}
+
+    if project.get("status") in {"queued", "rendering", "paused"}:
+        progress = _get_render_progress(project_id)
+        return {
+            "ok": True,
+            "status": project.get("status"),
+            "progress": progress.get("percent", 0),
+            "progress_message": progress.get("message", ""),
+            "already_running": True,
+        }
+
+    pause_event = asyncio.Event()
+    pause_event.set()
+    RENDER_PAUSE_EVENTS[project_id] = pause_event
+    background_tasks.add_task(_run_render, project_id)
+    project["status"] = "queued"
+    project["error"] = None
+    project_store.save_project(project)
+    _set_render_progress(project_id, 1, "Đang xếp hàng…")
+    return {
+        "ok": True,
+        "status": "queued",
+        "progress": 1,
+        "progress_message": "Đang xếp hàng…",
+        "already_running": False,
+    }
+
+
+def _get_render_progress(project_id: str) -> dict:
+    live = RENDER_PROGRESS.get(project_id)
+    if live:
+        return live
+    path = project_store.project_dir(project_id) / "output" / "progress.json"
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return {
+                "percent": int(data.get("percent", 0)),
+                "message": str(data.get("message") or ""),
+            }
+        except (OSError, json.JSONDecodeError, TypeError, ValueError):
+            pass
+    return {"percent": 0, "message": ""}
 
 
 def _render(request: Request, name: str, **ctx):
@@ -90,6 +169,7 @@ async def save_project(
     frame_2_x: str = Form("0.5"),
     frame_2_y: str = Form("0.5"),
     speed: str = Form("1"),
+    render_fps: str = Form("24"),
     karaoke: str | None = Form(None),
     clean_export: str | None = Form(None),
     auto_pose: str | None = Form(None),
@@ -135,6 +215,11 @@ async def save_project(
         project["speed"] = normalize_speed(speed)
     except Exception:  # noqa: BLE001
         project["speed"] = 1.0
+    try:
+        fps = int(float(render_fps))
+    except ValueError:
+        fps = 24
+    project["render_fps"] = fps if fps in {20, 24, 30} else 24
     project["karaoke"] = karaoke is not None
     project["clean_export"] = clean_export is not None
     project["auto_pose"] = auto_pose is not None
@@ -291,14 +376,37 @@ async def _run_render(project_id: str) -> None:
     project["status"] = "rendering"
     project["error"] = None
     project_store.save_project(project)
+    _set_render_progress(project_id, 1, "Đang chuẩn bị render…")
     pause_event = RENDER_PAUSE_EVENTS.get(project_id)
     if pause_event is None:
         pause_event = asyncio.Event()
         pause_event.set()
         RENDER_PAUSE_EVENTS[project_id] = pause_event
+
+    last_saved = {"pct": -1, "t": 0.0}
+
+    def on_progress(percent: float, message: str = "") -> None:
+        import time
+
+        now = time.monotonic()
+        pct = max(0, min(100, int(round(percent))))
+        # Always update memory; persist often so UI never stalls at 0%
+        should_persist = (
+            pct != last_saved["pct"]
+            or now - last_saved["t"] >= 0.4
+            or pct >= 100
+            or pct <= 2
+        )
+        _set_render_progress(project_id, pct, message, persist=should_persist)
+        if should_persist:
+            last_saved["pct"] = pct
+            last_saved["t"] = now
+
     try:
         folder = project_store.project_dir(project_id)
-        out = await render_project(project, folder, pause_event=pause_event)
+        out = await render_project(
+            project, folder, pause_event=pause_event, progress_cb=on_progress
+        )
         project = project_store.load_project(project_id)
         # duration was computed inside render; re-read manifest if needed
         manifest_path = folder / "output" / "manifest.json"
@@ -310,11 +418,13 @@ async def _run_render(project_id: str) -> None:
         project["base_file"] = "video_base.mp4"
         project["error"] = None
         project_store.save_project(project)
+        _set_render_progress(project_id, 100, "Hoàn tất")
     except Exception as exc:  # noqa: BLE001
         project = project_store.load_project(project_id)
         project["status"] = "error"
         project["error"] = f"{exc}\n{traceback.format_exc()[-800:]}"
         project_store.save_project(project)
+        _set_render_progress(project_id, 0, "Lỗi render")
     finally:
         RENDER_PAUSE_EVENTS.pop(project_id, None)
 
@@ -322,26 +432,23 @@ async def _run_render(project_id: str) -> None:
 @app.post("/projects/{project_id}/render")
 async def start_render(project_id: str, background_tasks: BackgroundTasks):
     try:
-        project = project_store.load_project(project_id)
+        project_store.load_project(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
-    if not (project.get("script") or "").strip():
-        project["status"] = "error"
-        project["error"] = (
-            "Kịch bản đang trống. Nhập nội dung → bấm Lưu dự án → rồi Render."
-        )
-        project_store.save_project(project)
-        return RedirectResponse(url=f"/projects/{project_id}", status_code=303)
-    if project.get("status") in {"queued", "rendering", "paused"}:
-        return RedirectResponse(url=f"/projects/{project_id}", status_code=303)
-    pause_event = asyncio.Event()
-    pause_event.set()
-    RENDER_PAUSE_EVENTS[project_id] = pause_event
-    background_tasks.add_task(_run_render, project_id)
-    project["status"] = "queued"
-    project["error"] = None
-    project_store.save_project(project)
+    _queue_render(project_id, background_tasks)
     return RedirectResponse(url=f"/projects/{project_id}", status_code=303)
+
+
+@app.post("/api/projects/{project_id}/render")
+async def api_start_render(project_id: str, background_tasks: BackgroundTasks):
+    try:
+        project_store.load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+    result = _queue_render(project_id, background_tasks)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "Không thể render")
+    return JSONResponse(result)
 
 
 @app.post("/api/projects/{project_id}/pause")
@@ -385,12 +492,22 @@ async def project_status(project_id: str):
         project = project_store.load_project(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
+    progress = _get_render_progress(project_id)
+    status = project.get("status")
+    if status == "ready":
+        progress = {"percent": 100, "message": progress.get("message") or "Hoàn tất"}
+    elif status == "draft":
+        progress = {"percent": 0, "message": ""}
+    elif status == "queued":
+        progress = {"percent": progress.get("percent", 0), "message": progress.get("message") or "Đang xếp hàng…"}
     return JSONResponse(
         {
-            "status": project.get("status"),
+            "status": status,
             "output_file": project.get("output_file"),
             "error": project.get("error"),
             "duration_sec": project.get("duration_sec"),
+            "progress": progress.get("percent", 0),
+            "progress_message": progress.get("message", ""),
         }
     )
 

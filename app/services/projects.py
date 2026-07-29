@@ -28,6 +28,7 @@ def _defaults() -> dict[str, Any]:
         "frame_1": {"mode": "cover", "zoom": 1.0, "x": 0.5, "y": 0.5},
         "frame_2": {"mode": "cover", "zoom": 1.0, "x": 0.5, "y": 0.5},
         "speed": 1.0,
+        "render_fps": 24,
         "sfx_clips": [],
         "base_file": None,
     }
@@ -58,6 +59,11 @@ def normalize_project(data: dict[str, Any]) -> dict[str, Any]:
         data["speed"] = normalize_speed(data.get("speed", 1.0))
     except Exception:  # noqa: BLE001
         data["speed"] = 1.0
+    try:
+        fps = int(float(data.get("render_fps", 24)))
+    except (TypeError, ValueError):
+        fps = 24
+    data["render_fps"] = fps if fps in {20, 24, 30} else 24
     return data
 
 

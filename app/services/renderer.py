@@ -101,10 +101,15 @@ def _fit_framed(
 
 
 def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
+    key = (size, bold)
+    cached = _FONT_CACHE.get(key)
+    if cached is not None:
+        return cached
     candidates = [
-        r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
         r"C:\Windows\Fonts\segoeuib.ttf" if bold else r"C:\Windows\Fonts\segoeui.ttf",
         r"C:\Windows\Fonts\tahomabd.ttf" if bold else r"C:\Windows\Fonts\tahoma.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf" if bold else r"C:\Windows\Fonts\arial.ttf",
+        r"C:\Windows\Fonts\arialuni.ttf",
         r"C:\Windows\Fonts\arial.ttf",
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
@@ -113,8 +118,12 @@ def _load_font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     ]
     for path in candidates:
         if Path(path).exists():
-            return ImageFont.truetype(path, size=size)
-    return ImageFont.load_default()
+            font = ImageFont.truetype(path, size=size)
+            _FONT_CACHE[key] = font
+            return font
+    font = ImageFont.load_default()
+    _FONT_CACHE[key] = font
+    return font
 
 
 def _fit_contain(img: Image.Image, width: int, height: int, bg=(235, 235, 238)) -> Image.Image:
@@ -130,7 +139,17 @@ def _fit_contain(img: Image.Image, width: int, height: int, bg=(235, 235, 238)) 
     return canvas
 
 
+_FONT_CACHE: dict[tuple[int, bool], ImageFont.ImageFont] = {}
 _STUDIO_BG: Image.Image | None = None
+_FOCUS_BG: dict[str, Image.Image] = {}
+_CHAR_CACHE: dict[str, Image.Image] = {}
+_PANEL_FIT_CACHE: dict[tuple, Image.Image] = {}
+
+
+def _clear_render_caches() -> None:
+    _FOCUS_BG.clear()
+    _CHAR_CACHE.clear()
+    _PANEL_FIT_CACHE.clear()
 
 
 def _build_studio_bg() -> Image.Image:
@@ -190,9 +209,11 @@ def _build_studio_bg() -> Image.Image:
 
 
 def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
-    """Studio background with a soft spotlight toward the active panel."""
+    """Studio background with a soft spotlight toward the active panel (cached per focus)."""
     global _STUDIO_BG
-    import math
+    cached = _FOCUS_BG.get(focus)
+    if cached is not None:
+        return cached.copy()
 
     if _STUDIO_BG is None:
         _STUDIO_BG = _build_studio_bg()
@@ -200,8 +221,8 @@ def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
     light = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0, 0))
     ld = ImageDraw.Draw(light)
 
-    pulse = 0.55 + 0.45 * (0.5 + 0.5 * math.sin(t * 3.2))
-    # Ambient shimmer
+    # Static spotlight (no per-frame pulse) — big render speedup
+    pulse = 0.85
     shimmer = int(10 + 8 * pulse)
     ld.ellipse(
         (
@@ -213,7 +234,6 @@ def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
         fill=(255, 248, 235, shimmer),
     )
 
-    # Focus spotlight under active panel
     if focus == POSE_POINT_1:
         cx0, cx1 = 40, VIDEO_WIDTH // 2 - 10
     elif focus == POSE_POINT_2:
@@ -228,8 +248,9 @@ def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
             fill=(255, 230, 190, alpha) if focus != POSE_CENTER else (255, 245, 230, alpha // 2),
         )
 
-    canvas = Image.alpha_composite(canvas, light)
-    return canvas.convert("RGB")
+    canvas = Image.alpha_composite(canvas, light).convert("RGB")
+    _FOCUS_BG[focus] = canvas
+    return canvas.copy()
 
 
 def _normalize_frame(frame: dict | None) -> dict:
@@ -269,17 +290,15 @@ def _draw_panel(
     dimmed: bool = False,
     t: float = 0.0,
 ) -> None:
-    import math
-
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     draw = ImageDraw.Draw(canvas)
 
-    # Soft outer glow for active panel
+    # Soft outer glow for active panel (static — no per-frame pulse)
     if active:
         glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
         gd = ImageDraw.Draw(glow)
-        pulse = 0.75 + 0.25 * (0.5 + 0.5 * math.sin(t * 5.0))
+        pulse = 0.9
         for i, alpha in enumerate((int(90 * pulse), int(55 * pulse), int(28 * pulse))):
             pad = 18 + i * 14
             gd.rounded_rectangle(
@@ -305,18 +324,32 @@ def _draw_panel(
     draw.rounded_rectangle((x0, y0, x1, y1), radius=10, fill=(20, 20, 24))
 
     if img_path and img_path.exists():
-        img = Image.open(img_path).convert("RGB")
         fr = _normalize_frame(frame)
-        fitted = _fit_framed(
-            img,
+        cache_key = (
+            str(img_path),
             w,
             h,
-            mode=fr["mode"],
-            zoom=fr["zoom"],
-            focus_x=fr["x"],
-            focus_y=fr["y"],
+            fr["mode"],
+            round(fr["zoom"], 3),
+            round(fr["x"], 3),
+            round(fr["y"], 3),
+            active,
+            dimmed,
         )
-        fitted = _tone_panel_image(fitted, active=active, dimmed=dimmed)
+        fitted = _PANEL_FIT_CACHE.get(cache_key)
+        if fitted is None:
+            img = Image.open(img_path).convert("RGB")
+            fitted = _fit_framed(
+                img,
+                w,
+                h,
+                mode=fr["mode"],
+                zoom=fr["zoom"],
+                focus_x=fr["x"],
+                focus_y=fr["y"],
+            )
+            fitted = _tone_panel_image(fitted, active=active, dimmed=dimmed)
+            _PANEL_FIT_CACHE[cache_key] = fitted
         canvas.paste(fitted, (x0, y0))
     else:
         draw.rectangle((x0, y0, x1, y1), fill=(55, 55, 62))
@@ -400,11 +433,15 @@ def _paste_character_center(
 ) -> Image.Image:
     if not char_path or not char_path.exists():
         return canvas
+    key = str(char_path.resolve()) if char_path.exists() else str(char_path)
+    char = _CHAR_CACHE.get(key)
+    if char is None:
+        char = Image.open(char_path).convert("RGBA")
+        target_h = int(VIDEO_HEIGHT * 0.44)
+        ratio = target_h / char.height
+        char = char.resize((max(1, int(char.width * ratio)), target_h), Image.Resampling.LANCZOS)
+        _CHAR_CACHE[key] = char
     base = canvas.convert("RGBA")
-    char = Image.open(char_path).convert("RGBA")
-    target_h = int(VIDEO_HEIGHT * 0.44)
-    ratio = target_h / char.height
-    char = char.resize((max(1, int(char.width * ratio)), target_h), Image.Resampling.LANCZOS)
     x = (VIDEO_WIDTH - char.width) // 2
     y = VIDEO_HEIGHT - char.height + 16 - bob
     if target == POSE_POINT_1:
@@ -549,9 +586,8 @@ def _make_compare_frame(
     caption_2: str = "",
     frame_1: dict | None = None,
     frame_2: dict | None = None,
+    layer_cache: dict[str, Image.Image] | None = None,
 ) -> Image.Image:
-    canvas = _paper_bg(t=t, focus=target)
-
     margin = 72
     gap = 28
     panel_w = (VIDEO_WIDTH - margin * 2 - gap) // 2
@@ -559,33 +595,48 @@ def _make_compare_frame(
     top = 92
     left_box = (margin, top, margin + panel_w, top + panel_h)
     right_box = (margin + panel_w + gap, top, margin + panel_w + gap + panel_w, top + panel_h)
-
-    spotlight = target in {POSE_POINT_1, POSE_POINT_2}
-    _draw_panel(
-        canvas,
-        left_img,
-        left_box,
-        "1",
-        active=(target == POSE_POINT_1),
-        caption=caption_1,
-        frame=frame_1,
-        dimmed=spotlight and target != POSE_POINT_1,
-        t=t,
-    )
-    _draw_panel(
-        canvas,
-        right_img,
-        right_box,
-        "2",
-        active=(target == POSE_POINT_2),
-        caption=caption_2,
-        frame=frame_2,
-        dimmed=spotlight and target != POSE_POINT_2,
-        t=t,
-    )
-
-    # Subtitle under panels
     y_sub = top + panel_h + 90
+
+    # Cache static base (bg + panels) per pointing target — karaoke/char redraw each frame
+    base = layer_cache.get(target) if layer_cache is not None else None
+    if base is None:
+        canvas = _paper_bg(t=t, focus=target)
+        spotlight = target in {POSE_POINT_1, POSE_POINT_2}
+        _draw_panel(
+            canvas,
+            left_img,
+            left_box,
+            "1",
+            active=(target == POSE_POINT_1),
+            caption=caption_1,
+            frame=frame_1,
+            dimmed=spotlight and target != POSE_POINT_1,
+            t=t,
+        )
+        _draw_panel(
+            canvas,
+            right_img,
+            right_box,
+            "2",
+            active=(target == POSE_POINT_2),
+            caption=caption_2,
+            frame=frame_2,
+            dimmed=spotlight and target != POSE_POINT_2,
+            t=t,
+        )
+        if brand_name.strip() and not clean_export:
+            draw0 = ImageDraw.Draw(canvas)
+            draw0.text(
+                (40, 24),
+                brand_name.strip(),
+                font=_load_font(26, bold=True),
+                fill=(100, 100, 110),
+            )
+        if layer_cache is not None:
+            layer_cache[target] = canvas.copy()
+        base = canvas
+    canvas = base.copy()
+
     draw = ImageDraw.Draw(canvas)
     if karaoke and cues:
         window, active_local = _karaoke_chunk(cues, t)
@@ -615,9 +666,6 @@ def _make_compare_frame(
             draw.text(((VIDEO_WIDTH - tw) / 2, y), line, font=font, fill=(35, 35, 40))
             y += 60
 
-    if brand_name.strip() and not clean_export:
-        draw.text((40, 24), brand_name.strip(), font=_load_font(26, bold=True), fill=(100, 100, 110))
-
     canvas = _paste_character_center(canvas, char_path, bob=bob, target=target)
     return canvas
 
@@ -642,6 +690,7 @@ def _make_frame(
     caption_2: str = "",
     frame_1: dict | None = None,
     frame_2: dict | None = None,
+    layer_cache: dict[str, Image.Image] | None = None,
 ) -> Image.Image:
     if layout == "compare":
         return _make_compare_frame(
@@ -660,6 +709,7 @@ def _make_frame(
             caption_2=caption_2,
             frame_1=frame_1,
             frame_2=frame_2,
+            layer_cache=layer_cache,
         )
 
     # Legacy full-bleed layout
@@ -835,8 +885,18 @@ async def _wait_if_paused(pause_event: asyncio.Event | None) -> None:
 
 
 async def render_project(
-    project: dict, project_folder: Path, pause_event: asyncio.Event | None = None
+    project: dict,
+    project_folder: Path,
+    pause_event: asyncio.Event | None = None,
+    progress_cb=None,
 ) -> Path:
+    def report(percent: float, message: str = "") -> None:
+        if progress_cb:
+            try:
+                progress_cb(percent, message)
+            except Exception:  # noqa: BLE001
+                pass
+
     script = (project.get("script") or "").strip()
     if not script:
         raise ValueError(
@@ -864,6 +924,15 @@ async def render_project(
     frame_1 = _normalize_frame(project.get("frame_1"))
     frame_2 = _normalize_frame(project.get("frame_2"))
     speed = normalize_speed(project.get("speed", 1.0))
+    try:
+        fps = int(float(project.get("render_fps", VIDEO_FPS)))
+    except (TypeError, ValueError):
+        fps = VIDEO_FPS
+    if fps not in {20, 24, 30}:
+        fps = VIDEO_FPS
+
+    _clear_render_caches()
+    report(2, "Đang chuẩn bị…")
 
     static_path = None
     pose_dir = None
@@ -886,13 +955,17 @@ async def render_project(
     frame_files: list[Path] = []
     global_frame = 0
     total_duration = 0.0
+    total_scenes = max(1, len(scenes))
 
     for i, scene in enumerate(scenes):
         await _wait_if_paused(pause_event)
+        # TTS phase: 5% → 35%
+        tts_pct = 5 + (i / total_scenes) * 30
+        report(tts_pct, f"Đang tạo giọng đọc cảnh {scene.index}/{total_scenes}…")
         audio_path = audio_dir / f"scene_{scene.index:03d}.mp3"
         vtt_path = audio_dir / f"scene_{scene.index:03d}.vtt"
         if i > 0:
-            await asyncio.sleep(0.8)
+            await asyncio.sleep(0.15)
         try:
             used_audio, _, cues = await synthesize_with_subtitles(
                 scene.text, voice, audio_path, vtt_path, speed=speed
@@ -919,11 +992,20 @@ async def render_project(
             scene_left = image_paths[0]
             scene_right = image_paths[1]
 
-        n_frames = max(int(round(duration * VIDEO_FPS)), 1)
+        layer_cache: dict[str, Image.Image] = {}
+        n_frames = max(int(round(duration * fps)), 1)
+        # Frame phase: 35% → 90% across all scenes
+        scene_base = 35 + (i / total_scenes) * 55
+        scene_span = 55 / total_scenes
         for f in range(n_frames):
-            if f % 2 == 0:
+            if f % 8 == 0:
                 await _wait_if_paused(pause_event)
-            t = min(duration - 1e-3, f / VIDEO_FPS) if duration > 0 else 0.0
+                frame_pct = scene_base + (f / max(1, n_frames)) * scene_span
+                report(
+                    frame_pct,
+                    f"Đang vẽ frame cảnh {scene.index}/{total_scenes} ({f + 1}/{n_frames})",
+                )
+            t = min(duration - 1e-3, f / fps) if duration > 0 else 0.0
             char_path, bob, target = _resolve_char_for_frame(
                 character_id=character_id,
                 char_pos=char_pos,
@@ -955,11 +1037,15 @@ async def render_project(
                 caption_2=caption_2,
                 frame_1=frame_1,
                 frame_2=frame_2,
+                layer_cache=layer_cache,
             )
             out = frames_dir / f"frame_{global_frame:06d}.jpg"
-            frame.save(out, quality=93)
+            frame.save(out, quality=85, optimize=False)
             frame_files.append(out)
             global_frame += 1
+
+        layer_cache.clear()
+        report(35 + ((i + 1) / total_scenes) * 55, f"Xong cảnh {scene.index}/{total_scenes}")
 
     list_file = audio_dir / "concat.txt"
     list_file.write_text(
@@ -968,7 +1054,7 @@ async def render_project(
     )
     merged_voice = audio_dir / "voice_all.mp3"
     await _wait_if_paused(pause_event)
-    await _wait_if_paused(pause_event)
+    report(91, "Đang ghép âm thanh…")
     _run_ffmpeg(
         [
             _ffmpeg(),
@@ -1000,12 +1086,14 @@ async def render_project(
     base_mp4 = output_dir / "video_base.mp4"
     output_mp4 = output_dir / "video.mp4"
 
+    await _wait_if_paused(pause_event)
+    report(94, "Đang encode video MP4…")
     _run_ffmpeg(
         [
             _ffmpeg(),
             "-y",
             "-framerate",
-            str(VIDEO_FPS),
+            str(fps),
             "-i",
             str(frames_dir / "frame_%06d.jpg"),
             "-i",
@@ -1045,6 +1133,7 @@ async def render_project(
         "auto_pose": auto_pose,
         "layout": layout,
         "speed": speed,
+        "fps": fps,
     }
     (output_dir / "manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1052,6 +1141,8 @@ async def render_project(
     project["duration_sec"] = round(total_duration, 3)
     project["output_file"] = output_mp4.name
     project["base_file"] = base_mp4.name
+    _clear_render_caches()
+    report(99, "Sắp xong…")
     return output_mp4
 
 
