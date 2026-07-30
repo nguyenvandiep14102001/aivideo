@@ -14,6 +14,24 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _normalize_frame_dict(frame: dict | None) -> dict:
+    base = {"mode": "cover", "zoom": 1.0, "x": 0.5, "y": 0.5}
+    cur = frame if isinstance(frame, dict) else {}
+    merged = {**base, **cur}
+    mode = str(merged.get("mode", "cover")).lower()
+    merged["mode"] = "contain" if mode == "contain" else "cover"
+    try:
+        merged["zoom"] = max(1.0, min(3.0, float(merged.get("zoom", 1.0) or 1.0)))
+    except (TypeError, ValueError):
+        merged["zoom"] = 1.0
+    for axis in ("x", "y"):
+        try:
+            merged[axis] = max(0.0, min(1.0, float(merged.get(axis, 0.5))))
+        except (TypeError, ValueError):
+            merged[axis] = 0.5
+    return merged
+
+
 def _defaults() -> dict[str, Any]:
     return {
         "character_id": "tuti",
@@ -27,10 +45,13 @@ def _defaults() -> dict[str, Any]:
         "caption_2": "",
         "frame_1": {"mode": "cover", "zoom": 1.0, "x": 0.5, "y": 0.5},
         "frame_2": {"mode": "cover", "zoom": 1.0, "x": 0.5, "y": 0.5},
+        "image_frames": {},
         "speed": 1.0,
         "render_fps": 24,
         "sfx_clips": [],
         "base_file": None,
+        "scene_setup": [],
+        "script_count": 1,
     }
 
 
@@ -38,21 +59,24 @@ def normalize_project(data: dict[str, Any]) -> dict[str, Any]:
     for key, value in _defaults().items():
         data.setdefault(key, value)
     for key in ("frame_1", "frame_2"):
-        base = {"mode": "cover", "zoom": 1.0, "x": 0.5, "y": 0.5}
-        cur = data.get(key) if isinstance(data.get(key), dict) else {}
-        merged = {**base, **cur}
-        mode = str(merged.get("mode", "cover")).lower()
-        merged["mode"] = "contain" if mode == "contain" else "cover"
-        try:
-            merged["zoom"] = max(1.0, min(3.0, float(merged.get("zoom", 1.0) or 1.0)))
-        except (TypeError, ValueError):
-            merged["zoom"] = 1.0
-        for axis in ("x", "y"):
-            try:
-                merged[axis] = max(0.0, min(1.0, float(merged.get(axis, 0.5))))
-            except (TypeError, ValueError):
-                merged[axis] = 0.5
-        data[key] = merged
+        data[key] = _normalize_frame_dict(data.get(key))
+    # Per-image frames keyed by filename
+    raw_frames = data.get("image_frames")
+    if not isinstance(raw_frames, dict):
+        raw_frames = {}
+    cleaned_frames: dict[str, Any] = {}
+    for name, fr in raw_frames.items():
+        key = str(name or "").strip()
+        if not key:
+            continue
+        cleaned_frames[key] = _normalize_frame_dict(fr if isinstance(fr, dict) else {})
+    # Seed from frame_1/frame_2 for first two images if missing
+    images = data.get("images") if isinstance(data.get("images"), list) else []
+    if len(images) >= 1 and images[0].get("name") and images[0]["name"] not in cleaned_frames:
+        cleaned_frames[images[0]["name"]] = dict(data["frame_1"])
+    if len(images) >= 2 and images[1].get("name") and images[1]["name"] not in cleaned_frames:
+        cleaned_frames[images[1]["name"]] = dict(data["frame_2"])
+    data["image_frames"] = cleaned_frames
     try:
         from app.services.tts import normalize_speed
 
@@ -64,6 +88,27 @@ def normalize_project(data: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         fps = 24
     data["render_fps"] = fps if fps in {20, 24, 30} else 24
+    setup = data.get("scene_setup")
+    if not isinstance(setup, list):
+        setup = []
+    cleaned_setup = []
+    for item in setup:
+        if not isinstance(item, dict):
+            continue
+        cleaned_setup.append(
+            {
+                "left": str(item.get("left") or "").strip() or None,
+                "right": str(item.get("right") or "").strip() or None,
+                "caption_1": str(item.get("caption_1") or "").strip()[:60],
+                "caption_2": str(item.get("caption_2") or "").strip()[:60],
+            }
+        )
+    data["scene_setup"] = cleaned_setup
+    try:
+        sc = int(float(data.get("script_count", 1)))
+    except (TypeError, ValueError):
+        sc = 1
+    data["script_count"] = max(1, min(6, sc))
     return data
 
 

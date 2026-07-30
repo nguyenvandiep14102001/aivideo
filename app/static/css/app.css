@@ -1,9 +1,10 @@
 :root {
-  --bg: #141210;
-  --bg-2: #1c1916;
-  --ink: #f3ebe1;
-  --muted: #a89c8e;
-  --line: rgba(243, 235, 225, 0.12);
+  --bg: #12100e;
+  --bg-2: #2a2520;
+  --bg-panel: #1e1a17;
+  --ink: #faf6f0;
+  --muted: #cbbba8;
+  --line: rgba(250, 246, 240, 0.22);
   --accent: #e8a35a;
   --accent-2: #ff6b4a;
   --ok: #7dcea0;
@@ -120,12 +121,20 @@ body {
 .field textarea,
 .field select,
 .upload input[type="file"] {
-  background: var(--bg-2);
-  border: 1px solid var(--line);
+  background: #15120f;
+  border: 1px solid rgba(250, 246, 240, 0.28);
   color: var(--ink);
   border-radius: 10px;
   padding: 0.75rem 0.9rem;
   font: inherit;
+}
+.new-project input:focus,
+.field input:focus,
+.field textarea:focus,
+.field select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(232, 163, 90, 0.22);
 }
 
 .new-project input { min-width: 220px; flex: 1; }
@@ -282,10 +291,11 @@ code {
 }
 
 .editor-form, .panel {
-  background: rgba(28, 25, 22, 0.72);
+  background: var(--bg-panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 1.1rem;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
 }
 
 .side { display: grid; gap: 1rem; }
@@ -293,8 +303,9 @@ code {
   font-family: var(--font-display);
   font-size: 1.15rem;
   margin: 0 0 0.4rem;
+  color: var(--ink);
 }
-.hint { color: var(--muted); font-size: 0.88rem; margin: 0 0 0.8rem; }
+.hint { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.8rem; line-height: 1.45; }
 
 .field {
   display: grid;
@@ -302,8 +313,8 @@ code {
   margin-bottom: 0.9rem;
 }
 .field span {
-  font-size: 0.82rem;
-  color: var(--muted);
+  font-size: 0.84rem;
+  color: #ddd0c0;
   font-weight: 600;
 }
 .field textarea { resize: vertical; min-height: 220px; }
@@ -540,9 +551,9 @@ code {
 .frame-controls {
   margin: 0.85rem 0 1rem;
   padding: 0.85rem 1rem 1rem;
-  border: 1px solid var(--line);
+  border: 1px solid rgba(250, 246, 240, 0.22);
   border-radius: 14px;
-  background: rgba(255,255,255,0.55);
+  background: linear-gradient(165deg, rgba(48, 40, 34, 0.96), rgba(26, 22, 18, 0.98));
 }
 .frame-controls .panel-head {
   margin-bottom: 0.75rem;
@@ -560,6 +571,22 @@ code {
     linear-gradient(160deg, #2a2d33 0%, #1c1e22 100%);
   border: 1px solid rgba(255,255,255,0.08);
 }
+.frame-preview-all {
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+}
+.frame-grid-all {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)) !important;
+}
+.segment-scene-list {
+  margin: 0 0 0.7rem;
+  padding-left: 1.1rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  max-height: 7.5rem;
+  overflow: auto;
+}
+.segment-scene-list li { margin: 0.2rem 0; }
 .frame-preview-panel {
   display: flex;
   flex-direction: column;
@@ -611,11 +638,12 @@ code {
   gap: 0.55rem;
   padding: 0.75rem;
   border-radius: 12px;
-  border: 1px solid var(--line);
-  background: #fff;
+  border: 1px solid rgba(250, 246, 240, 0.2);
+  background: #15120f;
 }
 .frame-card strong {
   font-size: 0.92rem;
+  color: var(--ink);
 }
 .frame-card input[type="range"] {
   width: 100%;
@@ -660,6 +688,18 @@ code {
   background: rgba(0,0,0,0.65);
   color: #fff;
   cursor: pointer;
+}
+.thumbs .thumb-idx {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 1;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: 6px;
+  background: rgba(0,0,0,0.65);
+  color: #fff;
 }
 
 .scenes {
@@ -760,6 +800,95 @@ code {
   background: #000;
 }
 
+.script-workspace {
+  margin: 0.4rem 0 1.1rem;
+  padding: 0.95rem 1.05rem 1.1rem;
+  border: 1px solid rgba(250, 246, 240, 0.24);
+  border-radius: 16px;
+  background:
+    linear-gradient(165deg, rgba(52, 44, 36, 0.95), rgba(28, 24, 20, 0.98));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+.script-workspace-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.script-workspace-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-display);
+}
+.script-count-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.inline-field {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+.inline-field span { white-space: nowrap; font-size: 0.85rem; color: #ddd0c0; }
+.inline-field select { min-width: 4.5rem; }
+.autosave-status {
+  font-size: 0.82rem;
+  color: #b8ecca;
+  min-width: 7rem;
+  text-align: right;
+  font-weight: 600;
+}
+.script-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0.75rem 0 0.85rem;
+}
+.script-tab {
+  border: 1px solid rgba(250, 246, 240, 0.22);
+  background: #15120f;
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.88rem;
+}
+.script-tab.active {
+  background: var(--accent, #d6453d);
+  border-color: transparent;
+  color: #1a120c;
+  font-weight: 700;
+}
+.script-panel { display: grid; gap: 0.7rem; }
+.script-panel[hidden] { display: none !important; }
+.script-panel .field textarea.script-tab-text {
+  min-height: 160px;
+  background: #100e0c;
+}
+.script-frame-block {
+  margin-top: 0.35rem;
+  padding: 0.85rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(250, 246, 240, 0.18);
+  background: #15120f;
+}
+.script-frame-block h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  color: var(--ink);
+}
+.script-frame-block .frame-preview-stage {
+  grid-template-columns: 1fr 1fr;
+}
+.script-frame-block .frame-grid {
+  grid-template-columns: 1fr 1fr;
+}
+
 .link-danger {
   background: none;
   border: none;
@@ -767,6 +896,43 @@ code {
   cursor: pointer;
   font: inherit;
   padding: 0;
+}
+
+.btn.danger-ghost {
+  background: transparent;
+  border: 1px solid rgba(200, 60, 50, 0.45);
+  color: #c43c32;
+}
+.btn.danger-ghost:hover:not(:disabled) {
+  background: rgba(200, 60, 50, 0.08);
+}
+.btn.danger-ghost:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.segment-setup {
+  margin: 0.9rem 0 1.1rem;
+  display: grid;
+  gap: 0.75rem;
+}
+.segment-card {
+  padding: 0.85rem 0.95rem;
+  border: 1px solid rgba(250, 246, 240, 0.2);
+  border-radius: 14px;
+  background: #15120f;
+}
+.segment-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+.segment-script {
+  margin: 0 0 0.7rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
 }
 
 @media (max-width: 880px) {

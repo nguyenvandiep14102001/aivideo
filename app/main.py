@@ -14,8 +14,8 @@ from app.config import CHARACTER_POSITIONS, STATIC_DIR, TEMPLATES_DIR, VOICES, e
 from app.services import characters as character_store
 from app.services import projects as project_store
 from app.services import sfx as sfx_store
-from app.services.renderer import apply_sfx_export, render_project
-from app.services.script_parser import parse_script
+from app.services.renderer import RenderCancelled, apply_sfx_export, render_project
+from app.services.script_parser import list_script_segments, parse_script
 
 ensure_dirs()
 character_store.ensure_builtin_characters()
@@ -25,6 +25,7 @@ app = FastAPI(title="AIvideo", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 RENDER_PAUSE_EVENTS: dict[str, asyncio.Event] = {}
+RENDER_CANCEL_EVENTS: dict[str, asyncio.Event] = {}
 RENDER_PROGRESS: dict[str, dict] = {}
 
 
@@ -75,6 +76,8 @@ def _queue_render(project_id: str, background_tasks: BackgroundTasks) -> dict:
     pause_event = asyncio.Event()
     pause_event.set()
     RENDER_PAUSE_EVENTS[project_id] = pause_event
+    cancel_event = asyncio.Event()
+    RENDER_CANCEL_EVENTS[project_id] = cancel_event
     background_tasks.add_task(_run_render, project_id)
     project["status"] = "queued"
     project["error"] = None
@@ -133,6 +136,13 @@ async def project_page(request: Request, project_id: str):
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
     scenes = parse_script(project.get("script", ""))
+    segments = list_script_segments(project.get("script", ""))
+    # Prefer explicit count, else derived from # splits
+    count = max(int(project.get("script_count") or 1), len(segments) or 1, 1)
+    count = min(6, count)
+    project["script_count"] = count
+    while len(segments) < count:
+        segments.append({"index": len(segments) + 1, "raw": "", "scenes": []})
     duration = project.get("duration_sec") or sfx_store.estimate_script_duration(
         project.get("script", "")
     )
@@ -141,12 +151,124 @@ async def project_page(request: Request, project_id: str):
         "project.html",
         project=project,
         scenes=scenes,
+        segments=segments[:count],
         voices=VOICES,
         characters=character_store.list_characters(),
         positions=CHARACTER_POSITIONS,
         sfx_list=sfx_store.list_sfx(),
         timeline_duration=duration,
     )
+
+
+def _frame_from_values(mode: str, zoom, x, y) -> dict:
+    try:
+        z = float(zoom)
+    except (TypeError, ValueError):
+        z = 1.0
+    try:
+        fx = float(x)
+    except (TypeError, ValueError):
+        fx = 0.5
+    try:
+        fy = float(y)
+    except (TypeError, ValueError):
+        fy = 0.5
+    return {
+        "mode": "contain" if str(mode) == "contain" else "cover",
+        "zoom": max(1.0, min(3.0, z)),
+        "x": max(0.0, min(1.0, fx)),
+        "y": max(0.0, min(1.0, fy)),
+    }
+
+
+def _apply_project_payload(project: dict, data: dict) -> dict:
+    """Shared save logic for form POST and JSON autosave."""
+    if "title" in data and data["title"] is not None:
+        project["title"] = str(data["title"]).strip() or project["title"]
+    if "script" in data and data["script"] is not None:
+        project["script"] = str(data["script"])
+    if "voice" in data and data["voice"]:
+        project["voice"] = str(data["voice"])
+    if "character_id" in data and data["character_id"]:
+        project["character_id"] = str(data["character_id"])
+    if "character_position" in data and data["character_position"]:
+        project["character_position"] = str(data["character_position"])
+    if "brand_name" in data and data["brand_name"] is not None:
+        project["brand_name"] = str(data["brand_name"]).strip()[:40]
+    if "caption_1" in data and data["caption_1"] is not None:
+        project["caption_1"] = str(data["caption_1"]).strip()[:60]
+    if "caption_2" in data and data["caption_2"] is not None:
+        project["caption_2"] = str(data["caption_2"]).strip()[:60]
+    if "script_count" in data and data["script_count"] is not None:
+        try:
+            project["script_count"] = max(1, min(6, int(data["script_count"])))
+        except (TypeError, ValueError):
+            pass
+
+    if all(k in data for k in ("frame_1_mode", "frame_1_zoom", "frame_1_x", "frame_1_y")):
+        project["frame_1"] = _frame_from_values(
+            data["frame_1_mode"], data["frame_1_zoom"], data["frame_1_x"], data["frame_1_y"]
+        )
+    if all(k in data for k in ("frame_2_mode", "frame_2_zoom", "frame_2_x", "frame_2_y")):
+        project["frame_2"] = _frame_from_values(
+            data["frame_2_mode"], data["frame_2_zoom"], data["frame_2_x"], data["frame_2_y"]
+        )
+
+    raw_frames = data.get("image_frames")
+    if raw_frames is None and data.get("image_frames_json"):
+        try:
+            raw_frames = json.loads(data["image_frames_json"])
+        except (TypeError, json.JSONDecodeError):
+            raw_frames = None
+    if isinstance(raw_frames, dict):
+        cleaned = {}
+        for name, fr in raw_frames.items():
+            if not name or not isinstance(fr, dict):
+                continue
+            cleaned[str(name)] = _frame_from_values(
+                fr.get("mode", "cover"), fr.get("zoom", 1), fr.get("x", 0.5), fr.get("y", 0.5)
+            )
+        project["image_frames"] = cleaned
+        imgs = project.get("images") or []
+        if len(imgs) >= 1 and imgs[0].get("name") in cleaned:
+            project["frame_1"] = cleaned[imgs[0]["name"]]
+        if len(imgs) >= 2 and imgs[1].get("name") in cleaned:
+            project["frame_2"] = cleaned[imgs[1]["name"]]
+
+    if "speed" in data and data["speed"] is not None:
+        try:
+            from app.services.tts import normalize_speed
+
+            project["speed"] = normalize_speed(data["speed"])
+        except Exception:  # noqa: BLE001
+            project["speed"] = 1.0
+    if "render_fps" in data and data["render_fps"] is not None:
+        try:
+            fps = int(float(data["render_fps"]))
+        except (TypeError, ValueError):
+            fps = 24
+        project["render_fps"] = fps if fps in {20, 24, 30} else 24
+
+    if "karaoke" in data:
+        project["karaoke"] = bool(data["karaoke"])
+    if "clean_export" in data:
+        project["clean_export"] = bool(data["clean_export"])
+    if "auto_pose" in data:
+        project["auto_pose"] = bool(data["auto_pose"])
+
+    raw_setup = data.get("scene_setup")
+    if raw_setup is None and data.get("scene_setup_json"):
+        try:
+            raw_setup = json.loads(data["scene_setup_json"])
+        except (TypeError, json.JSONDecodeError):
+            raw_setup = None
+    if isinstance(raw_setup, list):
+        project["scene_setup"] = raw_setup
+
+    project["duration_sec"] = round(
+        sfx_store.estimate_script_duration(project.get("script") or ""), 2
+    )
+    return project_store.save_project(project)
 
 
 @app.post("/projects/{project_id}/save")
@@ -173,62 +295,71 @@ async def save_project(
     karaoke: str | None = Form(None),
     clean_export: str | None = Form(None),
     auto_pose: str | None = Form(None),
+    scene_setup_json: str = Form("[]"),
+    image_frames_json: str = Form("{}"),
+    script_count: str = Form("1"),
 ):
     try:
         project = project_store.load_project(project_id)
     except FileNotFoundError:
         raise HTTPException(404, "Project not found")
-    project["title"] = title.strip() or project["title"]
-    project["script"] = script
-    project["voice"] = voice
-    project["character_id"] = character_id
-    project["character_position"] = character_position
-    project["brand_name"] = brand_name.strip()[:40]
-    project["caption_1"] = caption_1.strip()[:60]
-    project["caption_2"] = caption_2.strip()[:60]
-
-    def _frame(mode: str, zoom: str, x: str, y: str) -> dict:
-        try:
-            z = float(zoom)
-        except ValueError:
-            z = 1.0
-        try:
-            fx = float(x)
-        except ValueError:
-            fx = 0.5
-        try:
-            fy = float(y)
-        except ValueError:
-            fy = 0.5
-        return {
-            "mode": "contain" if mode == "contain" else "cover",
-            "zoom": max(1.0, min(3.0, z)),
-            "x": max(0.0, min(1.0, fx)),
-            "y": max(0.0, min(1.0, fy)),
-        }
-
-    project["frame_1"] = _frame(frame_1_mode, frame_1_zoom, frame_1_x, frame_1_y)
-    project["frame_2"] = _frame(frame_2_mode, frame_2_zoom, frame_2_x, frame_2_y)
-    try:
-        from app.services.tts import normalize_speed
-
-        project["speed"] = normalize_speed(speed)
-    except Exception:  # noqa: BLE001
-        project["speed"] = 1.0
-    try:
-        fps = int(float(render_fps))
-    except ValueError:
-        fps = 24
-    project["render_fps"] = fps if fps in {20, 24, 30} else 24
-    project["karaoke"] = karaoke is not None
-    project["clean_export"] = clean_export is not None
-    project["auto_pose"] = auto_pose is not None
-    if not project.get("duration_sec"):
-        project["duration_sec"] = round(
-            sfx_store.estimate_script_duration(script), 2
-        )
-    project_store.save_project(project)
+    _apply_project_payload(
+        project,
+        {
+            "title": title,
+            "script": script,
+            "voice": voice,
+            "character_id": character_id,
+            "character_position": character_position,
+            "brand_name": brand_name,
+            "caption_1": caption_1,
+            "caption_2": caption_2,
+            "frame_1_mode": frame_1_mode,
+            "frame_1_zoom": frame_1_zoom,
+            "frame_1_x": frame_1_x,
+            "frame_1_y": frame_1_y,
+            "frame_2_mode": frame_2_mode,
+            "frame_2_zoom": frame_2_zoom,
+            "frame_2_x": frame_2_x,
+            "frame_2_y": frame_2_y,
+            "speed": speed,
+            "render_fps": render_fps,
+            "karaoke": karaoke is not None,
+            "clean_export": clean_export is not None,
+            "auto_pose": auto_pose is not None,
+            "scene_setup_json": scene_setup_json,
+            "image_frames_json": image_frames_json,
+            "script_count": script_count,
+        },
+    )
     return RedirectResponse(url=f"/projects/{project_id}", status_code=303)
+
+
+@app.post("/api/projects/{project_id}/save")
+async def api_save_project(project_id: str, payload: dict = Body(...)):
+    try:
+        project = project_store.load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+    saved = _apply_project_payload(project, payload)
+    scenes = parse_script(saved.get("script") or "")
+    return JSONResponse(
+        {
+            "ok": True,
+            "updated_at": saved.get("updated_at"),
+            "script_count": saved.get("script_count"),
+            "duration_sec": saved.get("duration_sec"),
+            "scenes": [
+                {
+                    "index": s.index,
+                    "text": s.text,
+                    "target": s.target,
+                    "segment": s.segment,
+                }
+                for s in scenes
+            ],
+        }
+    )
 
 
 @app.post("/projects/{project_id}/images")
@@ -382,6 +513,10 @@ async def _run_render(project_id: str) -> None:
         pause_event = asyncio.Event()
         pause_event.set()
         RENDER_PAUSE_EVENTS[project_id] = pause_event
+    cancel_event = RENDER_CANCEL_EVENTS.get(project_id)
+    if cancel_event is None:
+        cancel_event = asyncio.Event()
+        RENDER_CANCEL_EVENTS[project_id] = cancel_event
 
     last_saved = {"pct": -1, "t": 0.0}
 
@@ -405,7 +540,11 @@ async def _run_render(project_id: str) -> None:
     try:
         folder = project_store.project_dir(project_id)
         out = await render_project(
-            project, folder, pause_event=pause_event, progress_cb=on_progress
+            project,
+            folder,
+            pause_event=pause_event,
+            cancel_event=cancel_event,
+            progress_cb=on_progress,
         )
         project = project_store.load_project(project_id)
         # duration was computed inside render; re-read manifest if needed
@@ -419,6 +558,12 @@ async def _run_render(project_id: str) -> None:
         project["error"] = None
         project_store.save_project(project)
         _set_render_progress(project_id, 100, "Hoàn tất")
+    except RenderCancelled:
+        project = project_store.load_project(project_id)
+        project["status"] = "draft"
+        project["error"] = None
+        project_store.save_project(project)
+        _set_render_progress(project_id, 0, "Đã hủy render")
     except Exception as exc:  # noqa: BLE001
         project = project_store.load_project(project_id)
         project["status"] = "error"
@@ -427,6 +572,7 @@ async def _run_render(project_id: str) -> None:
         _set_render_progress(project_id, 0, "Lỗi render")
     finally:
         RENDER_PAUSE_EVENTS.pop(project_id, None)
+        RENDER_CANCEL_EVENTS.pop(project_id, None)
 
 
 @app.post("/projects/{project_id}/render")
@@ -484,6 +630,32 @@ async def resume_render(project_id: str):
     project["status"] = "rendering"
     project_store.save_project(project)
     return JSONResponse({"ok": True, "status": "rendering"})
+
+
+@app.post("/api/projects/{project_id}/cancel")
+async def cancel_render(project_id: str):
+    try:
+        project = project_store.load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+    if project.get("status") not in {"queued", "rendering", "paused"}:
+        return JSONResponse(
+            {"ok": False, "status": project.get("status"), "detail": "Không có render đang chạy"}
+        )
+    cancel_event = RENDER_CANCEL_EVENTS.get(project_id)
+    if cancel_event is None:
+        cancel_event = asyncio.Event()
+        RENDER_CANCEL_EVENTS[project_id] = cancel_event
+    cancel_event.set()
+    # Wake pause wait so cancel is noticed immediately
+    pause_event = RENDER_PAUSE_EVENTS.get(project_id)
+    if pause_event is not None:
+        pause_event.set()
+    project["status"] = "draft"
+    project["error"] = None
+    project_store.save_project(project)
+    _set_render_progress(project_id, 0, "Đã hủy render")
+    return JSONResponse({"ok": True, "status": "draft"})
 
 
 @app.get("/api/projects/{project_id}/status")

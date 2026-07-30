@@ -13,10 +13,168 @@
           <span>Tên dự án</span>
           <input type="text" name="title" value="{{ project.title }}" required />
         </label>
-        <label class="field">
-          <span>Kịch bản</span>
-          <textarea name="script" rows="12" placeholder="1. Câu mô tả ảnh bên trái (số 1 không bị đọc).&#10;&#10;2. Câu mô tả ảnh bên phải.&#10;&#10;Câu không có số — nhân vật đứng giữa.">{{ project.script }}</textarea>
-        </label>
+        <div class="script-workspace" id="script-workspace">
+          <div class="panel-head script-workspace-head">
+            <h3>Kịch bản</h3>
+            <div class="script-count-wrap">
+              <label class="field inline-field">
+                <span>Số kịch bản</span>
+                <select id="script-count" name="script_count">
+                  {% for n in range(1, 7) %}
+                  <option value="{{ n }}" {% if project.script_count == n %}selected{% endif %}>{{ n }}</option>
+                  {% endfor %}
+                </select>
+              </label>
+              <span class="autosave-status" id="autosave-status">Tự động lưu</span>
+            </div>
+          </div>
+          <p class="hint">Chọn số kịch bản → từng tab thiết lập thoại + ảnh riêng. Trong tab vẫn dùng <code>1.</code>/<code>2.</code> như cũ.</p>
+          <div class="script-tabs" id="script-tabs" role="tablist"></div>
+          <div class="script-panels" id="script-panels">
+            {% set setup = project.scene_setup or [] %}
+            {% for seg in segments %}
+            {% set si = loop.index0 %}
+            {% set sc = setup[si] if si < setup|length else {} %}
+            <div class="script-panel {% if si == 0 %}active{% endif %}" data-panel="{{ si }}" {% if si != 0 %}hidden{% endif %}>
+              <label class="field">
+                <span>Nội dung kịch bản {{ seg.index }}</span>
+                <textarea class="script-tab-text" data-seg="{{ si }}" rows="8" placeholder="1. Câu ảnh trái…&#10;&#10;2. Câu ảnh phải…">{{ seg.raw }}</textarea>
+              </label>
+              <div class="row wrap">
+                <label class="field grow">
+                  <span>Ảnh trái (mặc định ảnh {{ 2*seg.index - 1 }})</span>
+                  <select class="seg-left" data-seg="{{ si }}">
+                    <option value="">— Mặc định —</option>
+                    {% for img in project.images %}
+                    <option value="{{ img.name }}" {% if sc.left == img.name %}selected{% endif %}>{{ loop.index }}. {{ img.original }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label class="field grow">
+                  <span>Ảnh phải (mặc định ảnh {{ 2*seg.index }})</span>
+                  <select class="seg-right" data-seg="{{ si }}">
+                    <option value="">— Mặc định —</option>
+                    {% for img in project.images %}
+                    <option value="{{ img.name }}" {% if sc.right == img.name %}selected{% endif %}>{{ loop.index }}. {{ img.original }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+              </div>
+              <div class="row wrap">
+                <label class="field grow">
+                  <span>Ghi chú trái</span>
+                  <input type="text" class="seg-cap1" data-seg="{{ si }}" value="{{ sc.caption_1 or '' }}" maxlength="60" placeholder="Tuỳ chọn" />
+                </label>
+                <label class="field grow">
+                  <span>Ghi chú phải</span>
+                  <input type="text" class="seg-cap2" data-seg="{{ si }}" value="{{ sc.caption_2 or '' }}" maxlength="60" placeholder="Tuỳ chọn" />
+                </label>
+              </div>
+              {% set iframes = project.image_frames or {} %}
+              {% set def_l = project.images[2*si] if project.images and project.images|length > 2*si else none %}
+              {% set def_r = project.images[2*si+1] if project.images and project.images|length > 2*si+1 else def_l %}
+              {% set ns = namespace(left=def_l, right=def_r) %}
+              {% for img in project.images %}
+                {% if sc.left and img.name == sc.left %}{% set ns.left = img %}{% endif %}
+                {% if sc.right and img.name == sc.right %}{% set ns.right = img %}{% endif %}
+              {% endfor %}
+              <div class="script-frame-block" data-frame-seg="{{ si }}">
+                <div class="panel-head">
+                  <h4>Khung hình kịch bản {{ seg.index }}</h4>
+                  <span class="hint">Demo live — zoom / focus ảnh trái &amp; phải của tab này</span>
+                </div>
+                {% if ns.left or ns.right %}
+                <div class="frame-preview-stage" data-frame-stage="{{ si }}">
+                  {% if ns.left %}
+                  <div class="frame-preview-panel">
+                    <div class="frame-preview-viewport" data-frame="{{ ns.left.name }}">
+                      <img class="frame-preview-img" data-frame="{{ ns.left.name }}"
+                           src="/projects/{{ project.id }}/images/{{ ns.left.name }}"
+                           alt="Preview trái" />
+                    </div>
+                    <span class="frame-preview-label">Ảnh trái</span>
+                  </div>
+                  {% endif %}
+                  {% if ns.right %}
+                  <div class="frame-preview-panel">
+                    <div class="frame-preview-viewport" data-frame="{{ ns.right.name }}">
+                      <img class="frame-preview-img" data-frame="{{ ns.right.name }}"
+                           src="/projects/{{ project.id }}/images/{{ ns.right.name }}"
+                           alt="Preview phải" />
+                    </div>
+                    <span class="frame-preview-label">Ảnh phải</span>
+                  </div>
+                  {% endif %}
+                </div>
+                <div class="frame-grid" data-frame-grid="{{ si }}">
+                  {% if ns.left %}
+                  {% set fr = iframes.get(ns.left.name) or {"mode":"cover","zoom":1,"x":0.5,"y":0.5} %}
+                  <div class="frame-card" data-frame-card="{{ ns.left.name }}" data-img-name="{{ ns.left.name }}">
+                    <strong>Ảnh trái — {{ ns.left.original }}</strong>
+                    <label class="field">
+                      <span>Cách fit</span>
+                      <select data-frame-ctrl="{{ ns.left.name }}" data-key="mode">
+                        <option value="cover" {% if fr.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
+                        <option value="contain" {% if fr.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Zoom <em class="frame-val" data-frame-val="{{ ns.left.name }}-zoom">{{ '%.2f'|format(fr.zoom or 1) }}</em></span>
+                      <input type="range" min="1" max="2.5" step="0.05" value="{{ fr.zoom or 1 }}"
+                             data-frame-ctrl="{{ ns.left.name }}" data-key="zoom" />
+                    </label>
+                    <label class="field">
+                      <span>Focus ngang <em class="frame-val" data-frame-val="{{ ns.left.name }}-x">{{ '%.2f'|format(fr.x if fr.x is not none else 0.5) }}</em></span>
+                      <input type="range" min="0" max="1" step="0.01" value="{{ fr.x if fr.x is not none else 0.5 }}"
+                             data-frame-ctrl="{{ ns.left.name }}" data-key="x" />
+                    </label>
+                    <label class="field">
+                      <span>Focus dọc <em class="frame-val" data-frame-val="{{ ns.left.name }}-y">{{ '%.2f'|format(fr.y if fr.y is not none else 0.5) }}</em></span>
+                      <input type="range" min="0" max="1" step="0.01" value="{{ fr.y if fr.y is not none else 0.5 }}"
+                             data-frame-ctrl="{{ ns.left.name }}" data-key="y" />
+                    </label>
+                  </div>
+                  {% endif %}
+                  {% if ns.right %}
+                  {% set fr = iframes.get(ns.right.name) or {"mode":"cover","zoom":1,"x":0.5,"y":0.5} %}
+                  <div class="frame-card" data-frame-card="{{ ns.right.name }}" data-img-name="{{ ns.right.name }}">
+                    <strong>Ảnh phải — {{ ns.right.original }}</strong>
+                    <label class="field">
+                      <span>Cách fit</span>
+                      <select data-frame-ctrl="{{ ns.right.name }}" data-key="mode">
+                        <option value="cover" {% if fr.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
+                        <option value="contain" {% if fr.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>Zoom <em class="frame-val" data-frame-val="{{ ns.right.name }}-zoom">{{ '%.2f'|format(fr.zoom or 1) }}</em></span>
+                      <input type="range" min="1" max="2.5" step="0.05" value="{{ fr.zoom or 1 }}"
+                             data-frame-ctrl="{{ ns.right.name }}" data-key="zoom" />
+                    </label>
+                    <label class="field">
+                      <span>Focus ngang <em class="frame-val" data-frame-val="{{ ns.right.name }}-x">{{ '%.2f'|format(fr.x if fr.x is not none else 0.5) }}</em></span>
+                      <input type="range" min="0" max="1" step="0.01" value="{{ fr.x if fr.x is not none else 0.5 }}"
+                             data-frame-ctrl="{{ ns.right.name }}" data-key="x" />
+                    </label>
+                    <label class="field">
+                      <span>Focus dọc <em class="frame-val" data-frame-val="{{ ns.right.name }}-y">{{ '%.2f'|format(fr.y if fr.y is not none else 0.5) }}</em></span>
+                      <input type="range" min="0" max="1" step="0.01" value="{{ fr.y if fr.y is not none else 0.5 }}"
+                             data-frame-ctrl="{{ ns.right.name }}" data-key="y" />
+                    </label>
+                  </div>
+                  {% endif %}
+                </div>
+                {% else %}
+                <p class="empty-sm">Chưa có ảnh cho kịch bản này — upload ảnh hoặc chọn ở trên.</p>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          <textarea name="script" id="script-combined" class="hidden" hidden>{{ project.script }}</textarea>
+          <input type="hidden" name="scene_setup_json" id="scene_setup_json" value='{{ project.scene_setup|tojson }}' />
+          <input type="hidden" name="image_frames_json" id="image_frames_json" value='{{ project.image_frames|tojson }}' />
+        </div>
 
         <div class="row wrap">
           <label class="field grow">
@@ -61,105 +219,16 @@
             <input type="text" name="brand_name" value="{{ project.brand_name or '' }}" placeholder="Tên thương hiệu" maxlength="40" />
           </label>
         </div>
-        <div class="row wrap">
-          <label class="field grow">
-            <span>Ghi chú trên ảnh 1 (trái)</span>
-            <input type="text" name="caption_1" value="{{ project.caption_1 or '' }}" placeholder="VD: Rắn cạp nia" maxlength="60" />
-          </label>
-          <label class="field grow">
-            <span>Ghi chú trên ảnh 2 (phải)</span>
-            <input type="text" name="caption_2" value="{{ project.caption_2 or '' }}" placeholder="VD: Rắn cạp long" maxlength="60" />
-          </label>
-        </div>
 
-        <div class="frame-controls" id="frame-controls">
-          <div class="panel-head">
-            <h3>Khung hình ảnh 1 &amp; 2</h3>
-            <span class="hint">Demo live — chỉnh mode / zoom / focus trước khi render</span>
-          </div>
-          {% set f1 = project.frame_1 or {} %}
-          {% set f2 = project.frame_2 or {} %}
-          {% set img1 = project.images[0] if project.images and project.images|length > 0 else none %}
-          {% set img2 = project.images[1] if project.images and project.images|length > 1 else img1 %}
-          <div class="frame-preview-stage" id="frame-preview-stage" aria-label="Demo khung ảnh">
-            <div class="frame-preview-panel">
-              <div class="frame-preview-viewport" data-frame="1">
-                {% if img1 %}
-                <img class="frame-preview-img" data-frame="1"
-                     src="/projects/{{ project.id }}/images/{{ img1.name }}"
-                     alt="Preview ảnh 1" />
-                {% else %}
-                <div class="frame-preview-empty">Chưa có ảnh 1</div>
-                {% endif %}
-              </div>
-              <span class="frame-preview-label">Ảnh 1 (trái)</span>
-            </div>
-            <div class="frame-preview-panel">
-              <div class="frame-preview-viewport" data-frame="2">
-                {% if img2 %}
-                <img class="frame-preview-img" data-frame="2"
-                     src="/projects/{{ project.id }}/images/{{ img2.name }}"
-                     alt="Preview ảnh 2" />
-                {% else %}
-                <div class="frame-preview-empty">Chưa có ảnh 2</div>
-                {% endif %}
-              </div>
-              <span class="frame-preview-label">Ảnh 2 (phải)</span>
-            </div>
-          </div>
-          <div class="frame-grid">
-            <div class="frame-card" data-frame-card="1">
-              <strong>Ảnh 1 (trái)</strong>
-              <label class="field">
-                <span>Cách fit</span>
-                <select name="frame_1_mode" data-frame-ctrl="1" data-key="mode">
-                  <option value="cover" {% if f1.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
-                  <option value="contain" {% if f1.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Zoom (1 → 2.5) <em class="frame-val" data-frame-val="1-zoom">{{ '%.2f'|format(f1.zoom or 1) }}</em></span>
-                <input type="range" name="frame_1_zoom" min="1" max="2.5" step="0.05" value="{{ f1.zoom or 1 }}"
-                       data-frame-ctrl="1" data-key="zoom" />
-              </label>
-              <label class="field">
-                <span>Focus ngang (trái → phải) <em class="frame-val" data-frame-val="1-x">{{ '%.2f'|format(f1.x if f1.x is not none else 0.5) }}</em></span>
-                <input type="range" name="frame_1_x" min="0" max="1" step="0.01" value="{{ f1.x if f1.x is not none else 0.5 }}"
-                       data-frame-ctrl="1" data-key="x" />
-              </label>
-              <label class="field">
-                <span>Focus dọc (trên → dưới) <em class="frame-val" data-frame-val="1-y">{{ '%.2f'|format(f1.y if f1.y is not none else 0.5) }}</em></span>
-                <input type="range" name="frame_1_y" min="0" max="1" step="0.01" value="{{ f1.y if f1.y is not none else 0.5 }}"
-                       data-frame-ctrl="1" data-key="y" />
-              </label>
-            </div>
-            <div class="frame-card" data-frame-card="2">
-              <strong>Ảnh 2 (phải)</strong>
-              <label class="field">
-                <span>Cách fit</span>
-                <select name="frame_2_mode" data-frame-ctrl="2" data-key="mode">
-                  <option value="cover" {% if f2.mode != 'contain' %}selected{% endif %}>Cover — lấp đầy (có cắt)</option>
-                  <option value="contain" {% if f2.mode == 'contain' %}selected{% endif %}>Contain — hiện đủ ảnh</option>
-                </select>
-              </label>
-              <label class="field">
-                <span>Zoom (1 → 2.5) <em class="frame-val" data-frame-val="2-zoom">{{ '%.2f'|format(f2.zoom or 1) }}</em></span>
-                <input type="range" name="frame_2_zoom" min="1" max="2.5" step="0.05" value="{{ f2.zoom or 1 }}"
-                       data-frame-ctrl="2" data-key="zoom" />
-              </label>
-              <label class="field">
-                <span>Focus ngang (trái → phải) <em class="frame-val" data-frame-val="2-x">{{ '%.2f'|format(f2.x if f2.x is not none else 0.5) }}</em></span>
-                <input type="range" name="frame_2_x" min="0" max="1" step="0.01" value="{{ f2.x if f2.x is not none else 0.5 }}"
-                       data-frame-ctrl="2" data-key="x" />
-              </label>
-              <label class="field">
-                <span>Focus dọc (trên → dưới) <em class="frame-val" data-frame-val="2-y">{{ '%.2f'|format(f2.y if f2.y is not none else 0.5) }}</em></span>
-                <input type="range" name="frame_2_y" min="0" max="1" step="0.01" value="{{ f2.y if f2.y is not none else 0.5 }}"
-                       data-frame-ctrl="2" data-key="y" />
-              </label>
-            </div>
-          </div>
-        </div>
+        {# legacy frame fields — values synced from first script pair #}
+        <input type="hidden" name="frame_1_mode" id="legacy_frame_1_mode" value="{{ (project.frame_1 or {}).mode or 'cover' }}" />
+        <input type="hidden" name="frame_1_zoom" id="legacy_frame_1_zoom" value="{{ (project.frame_1 or {}).zoom or 1 }}" />
+        <input type="hidden" name="frame_1_x" id="legacy_frame_1_x" value="{{ (project.frame_1 or {}).x if (project.frame_1 or {}).x is not none else 0.5 }}" />
+        <input type="hidden" name="frame_1_y" id="legacy_frame_1_y" value="{{ (project.frame_1 or {}).y if (project.frame_1 or {}).y is not none else 0.5 }}" />
+        <input type="hidden" name="frame_2_mode" id="legacy_frame_2_mode" value="{{ (project.frame_2 or {}).mode or 'cover' }}" />
+        <input type="hidden" name="frame_2_zoom" id="legacy_frame_2_zoom" value="{{ (project.frame_2 or {}).zoom or 1 }}" />
+        <input type="hidden" name="frame_2_x" id="legacy_frame_2_x" value="{{ (project.frame_2 or {}).x if (project.frame_2 or {}).x is not none else 0.5 }}" />
+        <input type="hidden" name="frame_2_y" id="legacy_frame_2_y" value="{{ (project.frame_2 or {}).y if (project.frame_2 or {}).y is not none else 0.5 }}" />
 
         <div class="checks">
           <label class="check">
@@ -204,7 +273,7 @@
         </div>
 
         <div class="row">
-          <button type="submit" class="btn ghost">Lưu dự án</button>
+          <span class="hint" id="autosave-hint">Mọi thay đổi được lưu tự động — không cần bấm Lưu.</span>
         </div>
       </div>
     </form>
@@ -273,7 +342,7 @@
   <aside class="side">
     <div class="panel">
       <h2>Ảnh cảnh</h2>
-      <p class="hint">Ảnh 1 = trái, ảnh 2 = phải (layout so sánh).</p>
+      <p class="hint">Kịch bản 1 = ảnh 1+2, kịch bản 2 (sau #) = ảnh 3+4… Có thể chọn lại trong Thiết lập từng kịch bản.</p>
       <form method="post" action="/projects/{{ project.id }}/images" enctype="multipart/form-data" class="upload">
         <input type="file" name="files" accept="image/*" multiple required />
         <button type="submit" class="btn ghost">Thêm ảnh</button>
@@ -283,6 +352,7 @@
         {% for img in project.images %}
         <li>
           <img src="/projects/{{ project.id }}/images/{{ img.name }}" alt="{{ img.original }}" />
+          <span class="thumb-idx">{{ loop.index }}</span>
           <form method="post" action="/projects/{{ project.id }}/images/{{ img.name }}/delete">
             <button type="submit" class="x" title="Xóa">×</button>
           </form>
@@ -296,15 +366,17 @@
 
     <div class="panel">
       <h2>Cảnh đã tách</h2>
+      <div id="scenes-box">
       {% if scenes %}
-      <ol class="scenes">
+      <ol class="scenes" id="scenes-list">
         {% for s in scenes %}
         <li>
           <span>{{ s.index }}</span>
           <div>
             <small class="hint" style="margin:0">
-              {% if s.target == 'point_1' %}→ chỉ ảnh 1 (trái)
-              {% elif s.target == 'point_2' %}→ chỉ ảnh 2 (phải)
+              KB {{ s.segment }}
+              · {% if s.target == 'point_1' %}→ trái
+              {% elif s.target == 'point_2' %}→ phải
               {% else %}→ giữa{% endif %}
               · không đọc số
             </small>
@@ -314,8 +386,9 @@
         {% endfor %}
       </ol>
       {% else %}
-      <p class="empty-sm">Lưu kịch bản để xem các cảnh.</p>
+      <p class="empty-sm" id="scenes-empty">Chỉnh kịch bản — danh sách cảnh cập nhật sau khi tự lưu.</p>
       {% endif %}
+      </div>
     </div>
 
     <div class="panel render-panel" data-status="{{ project.status }}">
@@ -341,7 +414,7 @@
         <li>✓ Nhân vật: {{ project.character_id }}</li>
         <li>○ SFX thêm sau ở timeline</li>
       </ul>
-      <form method="post" action="/projects/{{ project.id }}/render" id="render-form" class="row">
+      <form method="post" action="/projects/{{ project.id }}/render" id="render-form" class="row wrap">
         <button type="submit" class="btn primary" id="render-btn"
           {% if project.status in ['queued', 'rendering', 'paused'] %}disabled{% endif %}>
           {% if project.status in ['queued', 'rendering', 'paused'] %}Đang render…{% else %}1) Render video 9:16{% endif %}
@@ -349,6 +422,10 @@
         <button type="button" class="btn ghost" id="pause-btn"
           {% if project.status not in ['queued', 'rendering', 'paused'] %}disabled{% endif %}>
           {% if project.status == 'paused' %}Tiếp tục render{% else %}Tạm dừng render{% endif %}
+        </button>
+        <button type="button" class="btn danger-ghost" id="cancel-btn"
+          {% if project.status not in ['queued', 'rendering', 'paused'] %}disabled{% endif %}>
+          Không render nữa
         </button>
       </form>
       <div id="video-box" class="{% if project.status != 'ready' or not project.output_file %}hidden{% endif %}">
@@ -370,6 +447,9 @@
   window.AIVIDEO_STATUS = {{ project.status|tojson }};
   window.AIVIDEO_SFX_CLIPS = {{ project.sfx_clips|tojson }};
   window.AIVIDEO_DURATION = {{ timeline_duration }};
+  window.AIVIDEO_IMAGES = {{ project.images|tojson }};
+  window.AIVIDEO_IMAGE_FRAMES = {{ project.image_frames|tojson }};
+  window.AIVIDEO_SCRIPT_COUNT = {{ project.script_count|int }};
 </script>
-<script src="/static/js/app.js?v=3"></script>
+<script src="/static/js/app.js?v=10"></script>
 {% endblock %}

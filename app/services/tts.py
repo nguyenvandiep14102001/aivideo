@@ -164,14 +164,19 @@ def _cues_from_sentences(sentences: list[dict], full_text: str) -> list[dict]:
 
 
 async def _edge_stream(
-    text: str, voice: str, audio_path: Path, *, rate: str = "+0%"
+    text: str,
+    voice: str,
+    audio_path: Path,
+    *,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
 ) -> list[dict]:
     # WordBoundary is required for karaoke sync (default is SentenceBoundary only)
     communicate = edge_tts.Communicate(
         text=text,
         voice=voice,
         rate=rate,
-        pitch="+0Hz",
+        pitch=pitch or "+0Hz",
         boundary="WordBoundary",
     )
     word_cues: list[dict] = []
@@ -215,14 +220,21 @@ async def _edge_stream(
 
 
 async def _edge_with_retries(
-    text: str, voice: str, audio_path: Path, *, rate: str = "+0%"
+    text: str,
+    voice: str,
+    audio_path: Path,
+    *,
+    rate: str = "+0%",
+    pitch: str = "+0Hz",
 ) -> list[dict]:
     last_exc: Exception | None = None
     for attempt in range(6):
         try:
             if audio_path.exists():
                 audio_path.unlink()
-            return await _edge_stream(text, voice, audio_path, rate=rate)
+            return await _edge_stream(
+                text, voice, audio_path, rate=rate, pitch=pitch
+            )
         except Exception as exc:  # noqa: BLE001
             last_exc = exc
             await asyncio.sleep(0.8 + attempt * 0.6)
@@ -248,12 +260,24 @@ async def synthesize_with_subtitles(
     speed: float = 1.0,
 ) -> tuple[Path, Path, list[dict]]:
     """Generate audio with selected voice only + synced word cues."""
+    from app.config import resolve_voice
+
     text = _sanitize_text(text)
     audio_path.parent.mkdir(parents=True, exist_ok=True)
-    rate = speed_to_edge_rate(normalize_speed(speed))
+    profile = resolve_voice(voice)
+    edge_voice = profile.get("edge_voice") or voice
+    pitch = str(profile.get("pitch") or "+0Hz")
+    try:
+        bias = float(profile.get("rate_bias") or 0.0)
+    except (TypeError, ValueError):
+        bias = 0.0
+    effective_speed = normalize_speed(normalize_speed(speed) + bias)
+    rate = speed_to_edge_rate(effective_speed)
 
     try:
-        cues = await _edge_with_retries(text, voice, audio_path, rate=rate)
+        cues = await _edge_with_retries(
+            text, edge_voice, audio_path, rate=rate, pitch=pitch
+        )
     except Exception as edge_exc:
         raise RuntimeError(
             f"Không tạo được giọng đọc với đúng giọng đã chọn ({voice}).\n"

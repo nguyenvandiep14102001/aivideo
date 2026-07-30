@@ -17,6 +17,7 @@ from app.services.poses import (
     bounce_offset,
     pose_at_time,
     resolve_pose_file,
+    sway_offset,
 )
 from app.services.script_parser import Scene, parse_script
 from app.services.sfx import sfx_path
@@ -147,39 +148,136 @@ _PANEL_FIT_CACHE: dict[tuple, Image.Image] = {}
 
 
 def _clear_render_caches() -> None:
+    global _STUDIO_BG
+    _STUDIO_BG = None
     _FOCUS_BG.clear()
     _CHAR_CACHE.clear()
     _PANEL_FIT_CACHE.clear()
 
 
+def _draw_light_bulb(
+    draw: ImageDraw.ImageDraw,
+    cx: int,
+    cy: int,
+    size: float,
+    *,
+    lit: bool = False,
+    wire_top: int = 0,
+) -> None:
+    """Minimal hanging light-bulb motif (ideas / creative studio)."""
+    s = max(10, int(size))
+    # Cord
+    draw.line((cx, wire_top, cx, cy - int(s * 0.55)), fill=(55, 52, 48, 160), width=max(1, s // 14))
+    # Cap
+    cap_h = max(4, s // 5)
+    draw.rounded_rectangle(
+        (cx - s // 5, cy - int(s * 0.55), cx + s // 5, cy - int(s * 0.55) + cap_h),
+        radius=2,
+        fill=(70, 66, 60, 200) if not lit else (90, 78, 50, 230),
+    )
+    # Glass
+    glass = (
+        (255, 214, 70, 235)
+        if lit
+        else (72, 70, 68, 175)
+    )
+    outline = (255, 240, 160, 255) if lit else (245, 245, 242, 200)
+    bx0, by0 = cx - int(s * 0.38), cy - int(s * 0.28)
+    bx1, by1 = cx + int(s * 0.38), cy + int(s * 0.55)
+    draw.ellipse((bx0, by0, bx1, by1), fill=glass, outline=outline, width=max(1, s // 16))
+    # Filament
+    fy = cy + int(s * 0.05)
+    fcol = (255, 250, 210, 255) if lit else (210, 210, 205, 180)
+    draw.arc((cx - s // 6, fy - s // 8, cx + s // 6, fy + s // 8), 200, 340, fill=fcol, width=max(1, s // 18))
+    if lit:
+        # Soft rays
+        ray = (255, 200, 80, 90)
+        for dx, dy in ((-s, 0), (s, 0), (-s * 0.7, s * 0.55), (s * 0.7, s * 0.55), (-s * 0.55, -s * 0.4), (s * 0.55, -s * 0.4)):
+            draw.line((cx + dx * 0.45, cy + dy * 0.35, cx + dx, cy + dy), fill=ray, width=max(1, s // 20))
+
+
+def _draw_creative_doodles(layer: Image.Image) -> None:
+    """Chalk-soft doodles: stars, clouds, notes, gentle shapes — not a dense math board."""
+    import math
+
+    d = ImageDraw.Draw(layer)
+    w, h = layer.size
+    ink = (90, 110, 130, 55)
+    ink2 = (200, 120, 90, 48)
+    ink3 = (60, 150, 140, 50)
+
+    def star(x, y, r, col):
+        pts = []
+        for i in range(10):
+            ang = -math.pi / 2 + i * math.pi / 5
+            rad = r if i % 2 == 0 else r * 0.42
+            pts.append((x + rad * math.cos(ang), y + rad * math.sin(ang)))
+        d.polygon(pts, fill=col)
+
+    def cloud(x, y, s, col):
+        d.ellipse((x, y, x + s, y + s * 0.7), fill=col)
+        d.ellipse((x + s * 0.35, y - s * 0.25, x + s * 1.1, y + s * 0.55), fill=col)
+        d.ellipse((x + s * 0.7, y, x + s * 1.35, y + s * 0.65), fill=col)
+
+    def note(x, y, col):
+        d.ellipse((x, y + 14, x + 12, y + 24), fill=col)
+        d.line((x + 11, y + 18, x + 11, y), fill=col, width=2)
+        d.line((x + 11, y, x + 22, y + 4), fill=col, width=2)
+
+    # Sparse layout — keep center clear for panels / character
+    for x, y, r in ((70, 160, 14), (w - 90, 220, 11), (120, h - 280, 10), (w - 140, h - 340, 13)):
+        star(x, y, r, ink)
+    for x, y, s in ((40, 420, 48), (w - 160, 480, 42), (80, h - 520, 36)):
+        cloud(x, y, s, (ink[0], ink[1], ink[2], 38))
+    for x, y in ((w - 100, 620), (60, 700), (w - 160, h - 420)):
+        note(x, y, ink2)
+
+    # Soft arcs / swirls
+    for box, col in (
+        ((w * 0.72, h * 0.72, w * 0.95, h * 0.88), ink3),
+        ((30, h * 0.55, 180, h * 0.7), ink),
+        ((w * 0.08, h * 0.18, w * 0.28, h * 0.32), ink2),
+    ):
+        d.arc(box, 20, 200, fill=col, width=2)
+
+    # Tiny hearts / diamonds
+    for x, y, col in ((w - 70, 780, ink2), (95, 860, ink3), (w - 200, 900, ink)):
+        d.polygon([(x, y + 8), (x + 7, y), (x + 14, y + 8), (x + 7, y + 16)], fill=col)
+
+    # Faint geometric accents (triangle / circle) — creative, not exam-board dense
+    d.polygon([(55, h - 200), (95, h - 280), (135, h - 200)], outline=ink3)
+    d.ellipse((w - 160, h - 240, w - 90, h - 170), outline=ink, width=2)
+    d.line((w - 200, 160, w - 40, 200), fill=ink, width=1)
+    d.line((40, h - 160, 200, h - 120), fill=ink2, width=1)
+
+
 def _build_studio_bg() -> Image.Image:
-    """Warm creative studio backdrop — soft gradient + light orbs (cached)."""
+    """Creative 'idea studio' backdrop — warm paper, hanging bulbs, soft doodles."""
     import numpy as np
 
     h, w = VIDEO_HEIGHT, VIDEO_WIDTH
     yy = np.linspace(0, 1, h, dtype=np.float32)[:, None]
     xx = np.linspace(0, 1, w, dtype=np.float32)[None, :]
 
-    # Cream → soft peach-mint vertical blend
-    r = 252 - 22 * yy + 10 * xx
-    g = 246 - 10 * yy + 8 * (1 - xx)
-    b = 236 + 18 * yy - 6 * xx
+    # Warm parchment wash (bright, airy — not chalkboard)
+    r = 248 - 10 * yy + 8 * xx
+    g = 244 - 14 * yy + 6 * (1 - xx)
+    b = 232 - 18 * yy + 14 * xx
 
-    # Soft radial wash behind panel zone
-    cx, cy = 0.5, 0.28
-    dist = np.sqrt((xx - cx) ** 2 + ((yy - cy) * 1.35) ** 2)
-    glow = np.clip(1.0 - dist * 1.55, 0, 1) ** 1.6
-    r = r + 18 * glow
-    g = g + 14 * glow
-    b = b + 8 * glow
+    # Soft amber glow near top-center (hero bulb zone)
+    dist = np.sqrt((xx - 0.5) ** 2 + ((yy - 0.12) * 1.6) ** 2)
+    glow = np.clip(1.0 - dist * 1.7, 0, 1) ** 1.6
+    r = r + 28 * glow
+    g = g + 18 * glow
+    b = b + 4 * glow
 
-    # Decorative soft orbs (creative, not flat)
+    # Soft color orbs along edges
     for ox, oy, rad, cr, cg, cb, strength in (
-        (0.18, 0.12, 0.22, 255, 186, 140, 0.22),
-        (0.84, 0.16, 0.2, 140, 210, 200, 0.18),
-        (0.5, 0.62, 0.35, 255, 220, 190, 0.12),
-        (0.12, 0.78, 0.18, 180, 210, 230, 0.1),
-        (0.9, 0.72, 0.16, 255, 190, 170, 0.12),
+        (0.12, 0.08, 0.22, 255, 200, 120, 0.22),
+        (0.88, 0.10, 0.2, 140, 210, 200, 0.18),
+        (0.5, 0.55, 0.42, 255, 230, 190, 0.1),
+        (0.1, 0.85, 0.2, 160, 200, 230, 0.12),
+        (0.9, 0.8, 0.18, 255, 170, 140, 0.14),
     ):
         d = np.sqrt((xx - ox) ** 2 + ((yy - oy) * (h / w)) ** 2)
         blob = np.clip(1.0 - d / rad, 0, 1) ** 2 * strength
@@ -187,31 +285,49 @@ def _build_studio_bg() -> Image.Image:
         g = g * (1 - blob) + cg * blob
         b = b * (1 - blob) + cb * blob
 
-    # Fine paper grain
-    rng = np.random.default_rng(42)
-    grain = rng.normal(0, 2.2, (h, w)).astype(np.float32)
+    rng = np.random.default_rng(7)
+    grain = rng.normal(0, 2.0, (h, w)).astype(np.float32)
     arr = np.stack([r, g, b], axis=-1) + grain[:, :, None]
     arr = np.clip(arr, 0, 255).astype(np.uint8)
-    img = Image.fromarray(arr, mode="RGB")
+    img = Image.fromarray(arr, mode="RGB").convert("RGBA")
 
-    # Soft vignette via overlay
+    doodles = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    _draw_creative_doodles(doodles)
+    img = Image.alpha_composite(img, doodles)
+
+    bulbs = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(bulbs)
+    # Unlit side bulbs + one large lit hero bulb
+    for cx, cy, size, lit in (
+        (int(w * 0.12), 110, 38, False),
+        (int(w * 0.28), 78, 32, False),
+        (int(w * 0.72), 82, 34, False),
+        (int(w * 0.88), 118, 40, False),
+        (int(w * 0.5), 150, 78, True),
+    ):
+        _draw_light_bulb(bd, cx, cy, size, lit=lit, wire_top=0)
+    img = Image.alpha_composite(img, bulbs)
+
+    # Soft edge vignette
     vignette = Image.new("RGBA", (w, h), (0, 0, 0, 0))
     vd = ImageDraw.Draw(vignette)
-    for i, alpha in enumerate((18, 12, 7, 3)):
-        inset = 20 + i * 40
+    for i, alpha in enumerate((18, 10, 5)):
+        inset = 12 + i * 48
         vd.rounded_rectangle(
             (inset, inset, w - inset, h - inset),
-            radius=80,
-            outline=(60, 45, 40, alpha),
-            width=50,
+            radius=90,
+            outline=(60, 50, 40, alpha),
+            width=48,
         )
-    return Image.alpha_composite(img.convert("RGBA"), vignette).convert("RGB")
+    return Image.alpha_composite(img, vignette).convert("RGB")
 
 
 def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
-    """Studio background with a soft spotlight toward the active panel (cached per focus)."""
+    """Idea-studio background with pulsing bulb glow + soft spotlight."""
     global _STUDIO_BG
-    cached = _FOCUS_BG.get(focus)
+    phase = int((max(0.0, t) * 2.2) % 6)
+    cache_key = (focus, phase)
+    cached = _FOCUS_BG.get(cache_key)
     if cached is not None:
         return cached.copy()
 
@@ -221,17 +337,30 @@ def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
     light = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0, 0))
     ld = ImageDraw.Draw(light)
 
-    # Static spotlight (no per-frame pulse) — big render speedup
-    pulse = 0.85
-    shimmer = int(10 + 8 * pulse)
+    import math
+
+    pulse = 0.78 + 0.18 * math.sin(phase * 1.05)
+    # Hero bulb pulse
+    bx, by = VIDEO_WIDTH // 2, 150
+    for i, (rad, alpha) in enumerate(
+        ((110, int(50 * pulse)), (170, int(28 * pulse)), (240, int(12 * pulse)))
+    ):
+        ld.ellipse(
+            (bx - rad, by - rad + 20, bx + rad, by + rad + 40),
+            fill=(255, 210, 90, alpha),
+        )
+
+    shimmer = int(10 + 12 * pulse)
+    drift_x = int(18 * math.sin(phase * 0.9))
+    drift_y = int(10 * math.cos(phase * 0.7))
     ld.ellipse(
         (
-            VIDEO_WIDTH * 0.25,
-            40,
-            VIDEO_WIDTH * 0.75,
-            VIDEO_HEIGHT * 0.42,
+            VIDEO_WIDTH * 0.2 + drift_x,
+            40 + drift_y,
+            VIDEO_WIDTH * 0.8 + drift_x,
+            VIDEO_HEIGHT * 0.4 + drift_y,
         ),
-        fill=(255, 248, 235, shimmer),
+        fill=(255, 248, 220, shimmer),
     )
 
     if focus == POSE_POINT_1:
@@ -241,15 +370,15 @@ def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
     else:
         cx0, cx1 = VIDEO_WIDTH * 0.22, VIDEO_WIDTH * 0.78
 
-    for i, alpha in enumerate((int(70 * pulse), int(42 * pulse), int(22 * pulse))):
-        pad = 30 + i * 36
+    for i, alpha in enumerate((int(64 * pulse), int(36 * pulse), int(18 * pulse))):
+        pad = 28 + i * 34
         ld.ellipse(
-            (cx0 - pad, 30 - i * 10, cx1 + pad, VIDEO_HEIGHT * 0.48 + pad),
-            fill=(255, 230, 190, alpha) if focus != POSE_CENTER else (255, 245, 230, alpha // 2),
+            (cx0 - pad, 36 - i * 8, cx1 + pad, VIDEO_HEIGHT * 0.46 + pad),
+            fill=(255, 220, 150, alpha) if focus != POSE_CENTER else (255, 245, 220, alpha // 2),
         )
 
     canvas = Image.alpha_composite(canvas, light).convert("RGB")
-    _FOCUS_BG[focus] = canvas
+    _FOCUS_BG[cache_key] = canvas
     return canvas.copy()
 
 
@@ -429,7 +558,9 @@ def _paste_character_center(
     canvas: Image.Image,
     char_path: Path | None,
     bob: int = 0,
+    sway: int = 0,
     target: str = POSE_CENTER,
+    mouth: float = 0.0,
 ) -> Image.Image:
     if not char_path or not char_path.exists():
         return canvas
@@ -441,8 +572,10 @@ def _paste_character_center(
         ratio = target_h / char.height
         char = char.resize((max(1, int(char.width * ratio)), target_h), Image.Resampling.LANCZOS)
         _CHAR_CACHE[key] = char
+    # Mouth lip-sync disabled — paste sprite as-is (no overlay)
+    _ = mouth
     base = canvas.convert("RGBA")
-    x = (VIDEO_WIDTH - char.width) // 2
+    x = (VIDEO_WIDTH - char.width) // 2 + sway
     y = VIDEO_HEIGHT - char.height + 16 - bob
     if target == POSE_POINT_1:
         x -= 36
@@ -597,8 +730,10 @@ def _make_compare_frame(
     right_box = (margin + panel_w + gap, top, margin + panel_w + gap + panel_w, top + panel_h)
     y_sub = top + panel_h + 90
 
-    # Cache static base (bg + panels) per pointing target — karaoke/char redraw each frame
-    base = layer_cache.get(target) if layer_cache is not None else None
+    # Cache static base (bg + panels) per pointing target + bg phase
+    phase = int((max(0.0, t) * 2.2) % 6)
+    cache_key = f"{target}:{phase}"
+    base = layer_cache.get(cache_key) if layer_cache is not None else None
     if base is None:
         canvas = _paper_bg(t=t, focus=target)
         spotlight = target in {POSE_POINT_1, POSE_POINT_2}
@@ -633,7 +768,7 @@ def _make_compare_frame(
                 fill=(100, 100, 110),
             )
         if layer_cache is not None:
-            layer_cache[target] = canvas.copy()
+            layer_cache[cache_key] = canvas.copy()
         base = canvas
     canvas = base.copy()
 
@@ -666,7 +801,12 @@ def _make_compare_frame(
             draw.text(((VIDEO_WIDTH - tw) / 2, y), line, font=font, fill=(35, 35, 40))
             y += 60
 
-    canvas = _paste_character_center(canvas, char_path, bob=bob, target=target)
+    # Soft idle motion only — mouth lip-sync off
+    sway = sway_offset(t, False, target, mouth=0.0)
+    bob = bounce_offset(t, False, mouth=0.0)
+    canvas = _paste_character_center(
+        canvas, char_path, bob=bob, sway=sway, target=target, mouth=0.0
+    )
     return canvas
 
 
@@ -731,7 +871,12 @@ def _make_frame(
         draw_bg = ImageDraw.Draw(canvas)
         draw_bg.rectangle((0, 0, VIDEO_WIDTH, VIDEO_HEIGHT), fill=(24, 24, 28))
 
-    canvas = _paste_character_center(canvas, char_path, bob=bob, target=target)
+    # Soft idle motion only — mouth lip-sync off
+    sway = sway_offset(t, False, target, mouth=0.0)
+    bob = bounce_offset(t, False, mouth=0.0)
+    canvas = _paste_character_center(
+        canvas, char_path, bob=bob, sway=sway, target=target, mouth=0.0
+    )
     draw = ImageDraw.Draw(canvas)
     y_sub = VIDEO_HEIGHT - 220
     if karaoke and cues:
@@ -863,11 +1008,8 @@ def _resolve_char_for_frame(
 ) -> tuple[Path | None, int, str]:
     if char_pos == "hidden":
         return None, 0, POSE_CENTER
-    speaking = bool(cues) and any(
-        c["offset"] - 0.05 <= t <= c["offset"] + max(c["duration"], 0.08) + 0.2
-        for c in cues
-    )
-    bob = bounce_offset(t, speaking)
+    # Mouth disabled — gentle idle bob only
+    bob = bounce_offset(t, False, mouth=0.0)
     target = scene_target if scene_target in {POSE_POINT_1, POSE_POINT_2, POSE_CENTER} else POSE_CENTER
     if auto_pose and pose_dir and pose_dir.exists():
         target = pose_at_time(cues, t, scene_text, scene_target=target)
@@ -877,10 +1019,21 @@ def _resolve_char_for_frame(
     return static_path, bob, target
 
 
-async def _wait_if_paused(pause_event: asyncio.Event | None) -> None:
+class RenderCancelled(Exception):
+    """Raised when the user cancels an in-progress render."""
+
+
+async def _wait_if_paused(
+    pause_event: asyncio.Event | None,
+    cancel_event: asyncio.Event | None = None,
+) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise RenderCancelled("Render cancelled by user")
     if pause_event is None:
         return
     while not pause_event.is_set():
+        if cancel_event is not None and cancel_event.is_set():
+            raise RenderCancelled("Render cancelled by user")
         await asyncio.sleep(0.25)
 
 
@@ -888,6 +1041,7 @@ async def render_project(
     project: dict,
     project_folder: Path,
     pause_event: asyncio.Event | None = None,
+    cancel_event: asyncio.Event | None = None,
     progress_cb=None,
 ) -> Path:
     def report(percent: float, message: str = "") -> None:
@@ -900,7 +1054,7 @@ async def render_project(
     script = (project.get("script") or "").strip()
     if not script:
         raise ValueError(
-            "Kịch bản đang trống. Hãy nhập nội dung rồi bấm Lưu dự án trước khi Render."
+            "Kịch bản đang trống. Hãy nhập nội dung (tự động lưu) trước khi Render."
         )
 
     scenes = parse_script(script)
@@ -923,6 +1077,19 @@ async def render_project(
     caption_2 = project.get("caption_2") or ""
     frame_1 = _normalize_frame(project.get("frame_1"))
     frame_2 = _normalize_frame(project.get("frame_2"))
+    image_frames_raw = project.get("image_frames") if isinstance(project.get("image_frames"), dict) else {}
+    image_frames = {
+        str(k): _normalize_frame(v) for k, v in image_frames_raw.items() if k
+    }
+    # Keep legacy frame_1/2 as defaults for first two filenames
+    if images:
+        n0 = images[0].get("name")
+        if n0 and n0 not in image_frames:
+            image_frames[n0] = frame_1
+        if len(images) >= 2:
+            n1 = images[1].get("name")
+            if n1 and n1 not in image_frames:
+                image_frames[n1] = frame_2
     speed = normalize_speed(project.get("speed", 1.0))
     try:
         fps = int(float(project.get("render_fps", VIDEO_FPS)))
@@ -958,7 +1125,7 @@ async def render_project(
     total_scenes = max(1, len(scenes))
 
     for i, scene in enumerate(scenes):
-        await _wait_if_paused(pause_event)
+        await _wait_if_paused(pause_event, cancel_event)
         # TTS phase: 5% → 35%
         tts_pct = 5 + (i / total_scenes) * 30
         report(tts_pct, f"Đang tạo giọng đọc cảnh {scene.index}/{total_scenes}…")
@@ -982,15 +1149,34 @@ async def render_project(
         segment_audios.append(used_audio)
         total_duration += duration
 
-        # Optional per-scene image override: scene N can use images[2*(N-1)] / [2*(N-1)+1]
+        # Per-script (# segment) images: scene_setup[segment-1], else packed pairs
         scene_left = left_img
         scene_right = right_img
-        if len(image_paths) >= 2 * scene.index:
-            scene_left = image_paths[2 * (scene.index - 1)]
-            scene_right = image_paths[2 * (scene.index - 1) + 1]
+        scene_cap_1 = caption_1
+        scene_cap_2 = caption_2
+        seg = max(1, int(getattr(scene, "segment", 1) or 1))
+        seg_i = seg - 1
+        setup_list = project.get("scene_setup") if isinstance(project.get("scene_setup"), list) else []
+        setup = setup_list[seg_i] if seg_i < len(setup_list) and isinstance(setup_list[seg_i], dict) else None
+        if setup:
+            name_to_path = {p.name: p for p in image_paths}
+            if setup.get("left") and setup["left"] in name_to_path:
+                scene_left = name_to_path[setup["left"]]
+            if setup.get("right") and setup["right"] in name_to_path:
+                scene_right = name_to_path[setup["right"]]
+            if setup.get("caption_1"):
+                scene_cap_1 = setup["caption_1"]
+            if setup.get("caption_2"):
+                scene_cap_2 = setup["caption_2"]
+        elif len(image_paths) >= 2 * seg:
+            scene_left = image_paths[2 * seg_i]
+            scene_right = image_paths[2 * seg_i + 1]
         elif len(image_paths) >= 2:
             scene_left = image_paths[0]
             scene_right = image_paths[1]
+
+        scene_frame_1 = image_frames.get(scene_left.name, frame_1) if scene_left else frame_1
+        scene_frame_2 = image_frames.get(scene_right.name, frame_2) if scene_right else frame_2
 
         layer_cache: dict[str, Image.Image] = {}
         n_frames = max(int(round(duration * fps)), 1)
@@ -999,7 +1185,7 @@ async def render_project(
         scene_span = 55 / total_scenes
         for f in range(n_frames):
             if f % 8 == 0:
-                await _wait_if_paused(pause_event)
+                await _wait_if_paused(pause_event, cancel_event)
                 frame_pct = scene_base + (f / max(1, n_frames)) * scene_span
                 report(
                     frame_pct,
@@ -1033,10 +1219,10 @@ async def render_project(
                 right_img=scene_right,
                 target=target,
                 layout=layout,
-                caption_1=caption_1,
-                caption_2=caption_2,
-                frame_1=frame_1,
-                frame_2=frame_2,
+                caption_1=scene_cap_1,
+                caption_2=scene_cap_2,
+                frame_1=scene_frame_1,
+                frame_2=scene_frame_2,
                 layer_cache=layer_cache,
             )
             out = frames_dir / f"frame_{global_frame:06d}.jpg"
@@ -1053,7 +1239,7 @@ async def render_project(
         encoding="utf-8",
     )
     merged_voice = audio_dir / "voice_all.mp3"
-    await _wait_if_paused(pause_event)
+    await _wait_if_paused(pause_event, cancel_event)
     report(91, "Đang ghép âm thanh…")
     _run_ffmpeg(
         [
@@ -1086,7 +1272,7 @@ async def render_project(
     base_mp4 = output_dir / "video_base.mp4"
     output_mp4 = output_dir / "video.mp4"
 
-    await _wait_if_paused(pause_event)
+    await _wait_if_paused(pause_event, cancel_event)
     report(94, "Đang encode video MP4…")
     _run_ffmpeg(
         [
