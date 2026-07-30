@@ -13,7 +13,7 @@ async def main() -> None:
     lines = []
     for voice in ["vi-VN-HoaiMyNeural", "vi-VN-NamMinhNeural"]:
         try:
-            path, _, cues = await synthesize_with_subtitles(TEXT, voice, OUT, VTT)
+            path, _, cues, _ = await synthesize_with_subtitles(TEXT, voice, OUT, VTT)
             lines.append(f"OK {voice} -> {path} size={path.stat().st_size} cues={len(cues)}")
         except Exception as exc:
             lines.append(f"FAIL {voice}: {exc}")

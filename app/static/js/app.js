@@ -663,7 +663,9 @@
     const parts = [];
     for (let i = 0; i < count; i++) {
       const el = scriptPanelsEl.querySelector(`.script-tab-text[data-seg="${i}"]`);
-      parts.push(((el && el.value) || "").trim());
+      const text = ((el && el.value) || "").trim();
+      // Skip empty tabs so we don't create junk "#" segments
+      if (text) parts.push(text);
     }
     scriptCombined.value = parts.join("\n#\n");
   }

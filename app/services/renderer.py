@@ -36,17 +36,9 @@ def _run_ffmpeg(cmd: list[str], label: str) -> None:
 
 
 def _audio_duration(path: Path) -> float:
-    result = subprocess.run(
-        [_ffmpeg(), "-i", str(path), "-f", "null", "-"],
-        capture_output=True,
-        text=True,
-    )
-    for line in result.stderr.splitlines():
-        if "Duration:" in line:
-            part = line.split("Duration:")[1].split(",")[0].strip()
-            h, m, s = part.split(":")
-            return int(h) * 3600 + int(m) * 60 + float(s)
-    return 3.0
+    from app.services.tts import _audio_duration_ffprobe
+
+    return _audio_duration_ffprobe(path)
 
 
 def _fit_cover(img: Image.Image, width: int, height: int) -> Image.Image:
@@ -1124,32 +1116,67 @@ async def render_project(
     total_duration = 0.0
     total_scenes = max(1, len(scenes))
 
+    # ---- Phase 1: all TTS first (fail fast; reuse cache; no wasted frames) ----
+    scene_tts: list[tuple[Path, list[dict], float]] = []
+    live_tts_count = 0
     for i, scene in enumerate(scenes):
         await _wait_if_paused(pause_event, cancel_event)
-        # TTS phase: 5% → 35%
         tts_pct = 5 + (i / total_scenes) * 30
         report(tts_pct, f"Đang tạo giọng đọc cảnh {scene.index}/{total_scenes}…")
         audio_path = audio_dir / f"scene_{scene.index:03d}.mp3"
         vtt_path = audio_dir / f"scene_{scene.index:03d}.vtt"
-        if i > 0:
-            await asyncio.sleep(0.15)
-        try:
-            used_audio, _, cues = await synthesize_with_subtitles(
-                scene.text, voice, audio_path, vtt_path, speed=speed
-            )
-        except Exception as exc:  # noqa: BLE001
+
+        last_exc: Exception | None = None
+        used_audio = audio_path
+        cues: list[dict] = []
+        from_cache = False
+        # More scenes (2+ kịch bản) → more Edge pressure; retry whole scene
+        scene_tries = 4 if total_scenes >= 4 else 3
+        for attempt in range(scene_tries):
+            try:
+                used_audio, _, cues, from_cache = await synthesize_with_subtitles(
+                    scene.text, voice, audio_path, vtt_path, speed=speed
+                )
+                last_exc = None
+                break
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                report(
+                    tts_pct,
+                    f"TTS cảnh {scene.index} lỗi — thử lại {attempt + 1}/{scene_tries}…",
+                )
+                await asyncio.sleep(1.2 + attempt * 1.5)
+        if last_exc is not None:
             raise RuntimeError(
-                f"TTS lỗi ở cảnh {scene.index}. Kiểm tra mạng / giọng đọc.\n{exc}"
-            ) from exc
+                f"TTS lỗi ở cảnh {scene.index}. Kiểm tra mạng / giọng đọc.\n{last_exc}"
+            ) from last_exc
 
         if not used_audio.exists() or used_audio.stat().st_size < 100:
             raise RuntimeError(f"File giọng đọc cảnh {scene.index} tạo thất bại.")
 
+        # Pace live Edge calls harder when many scenes (2+ scripts)
+        if not from_cache:
+            live_tts_count += 1
+            if i + 1 < total_scenes:
+                gap = 0.7 + min(live_tts_count, 6) * 0.35
+                if total_scenes >= 4:
+                    gap += 0.5
+                await asyncio.sleep(gap)
+
         duration = max(_audio_duration(used_audio), 1.5)
         segment_audios.append(used_audio)
         total_duration += duration
+        scene_tts.append((used_audio, cues, duration))
 
-        # Per-script (# segment) images: scene_setup[segment-1], else packed pairs
+    report(35, "Đã có giọng đọc — đang vẽ khung hình…")
+
+    # ---- Phase 2: frames (reuse identical visual states) ----
+    import shutil
+
+    for i, scene in enumerate(scenes):
+        await _wait_if_paused(pause_event, cancel_event)
+        _used_audio, cues, duration = scene_tts[i]
+
         scene_left = left_img
         scene_right = right_img
         scene_cap_1 = caption_1
@@ -1180,11 +1207,13 @@ async def render_project(
 
         layer_cache: dict[str, Image.Image] = {}
         n_frames = max(int(round(duration * fps)), 1)
-        # Frame phase: 35% → 90% across all scenes
         scene_base = 35 + (i / total_scenes) * 55
         scene_span = 55 / total_scenes
+        last_key: tuple | None = None
+        last_frame_path: Path | None = None
+
         for f in range(n_frames):
-            if f % 8 == 0:
+            if f % 16 == 0:
                 await _wait_if_paused(pause_event, cancel_event)
                 frame_pct = scene_base + (f / max(1, n_frames)) * scene_span
                 report(
@@ -1203,30 +1232,45 @@ async def render_project(
                 pose_dir=pose_dir,
                 scene_target=getattr(scene, "target", POSE_CENTER),
             )
-            frame = _make_frame(
-                scene_left,
-                cues,
-                t,
-                scene.text,
-                char_path,
-                char_pos,
-                karaoke,
-                clean_export,
-                brand_name,
-                f"Cảnh {scene.index}/{len(scenes)}",
-                bob=bob,
-                left_img=scene_left,
-                right_img=scene_right,
-                target=target,
-                layout=layout,
-                caption_1=scene_cap_1,
-                caption_2=scene_cap_2,
-                frame_1=scene_frame_1,
-                frame_2=scene_frame_2,
-                layer_cache=layer_cache,
+            _, active_local = _karaoke_chunk(cues, t) if (karaoke and cues) else ([], -1)
+            bg_phase = int((max(0.0, t) * 2.2) % 6)
+            # Quantize bob so tiny idle motion does not force a full redraw
+            state_key = (
+                str(char_path) if char_path else "",
+                target,
+                active_local,
+                bg_phase,
+                bob // 2,
             )
             out = frames_dir / f"frame_{global_frame:06d}.jpg"
-            frame.save(out, quality=85, optimize=False)
+            if last_key == state_key and last_frame_path is not None:
+                shutil.copyfile(last_frame_path, out)
+            else:
+                frame = _make_frame(
+                    scene_left,
+                    cues,
+                    t,
+                    scene.text,
+                    char_path,
+                    char_pos,
+                    karaoke,
+                    clean_export,
+                    brand_name,
+                    f"Cảnh {scene.index}/{len(scenes)}",
+                    bob=bob,
+                    left_img=scene_left,
+                    right_img=scene_right,
+                    target=target,
+                    layout=layout,
+                    caption_1=scene_cap_1,
+                    caption_2=scene_cap_2,
+                    frame_1=scene_frame_1,
+                    frame_2=scene_frame_2,
+                    layer_cache=layer_cache,
+                )
+                frame.save(out, quality=78, optimize=False, subsampling=2)
+                last_key = state_key
+                last_frame_path = out
             frame_files.append(out)
             global_frame += 1
 
@@ -1286,6 +1330,10 @@ async def render_project(
             str(mixed_audio),
             "-c:v",
             "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
@@ -1305,8 +1353,6 @@ async def render_project(
         raise RuntimeError("Xuất MP4 thất bại — file quá nhỏ hoặc không tạo được.")
 
     # Working preview starts as clean base (no SFX yet)
-    import shutil
-
     shutil.copyfile(base_mp4, output_mp4)
 
     manifest = {

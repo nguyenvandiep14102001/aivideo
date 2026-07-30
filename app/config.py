@@ -33,8 +33,9 @@ VOICES = [
         "id": "vi-VN-NamMinh-Express",
         "label": "Nam Minh truyền cảm (nhấn nhá)",
         "edge_voice": "vi-VN-NamMinhNeural",
-        "pitch": "+12Hz",
-        "rate_bias": -0.08,
+        # Keep mild — strong pitch/rate often makes Edge return no audio on long scenes
+        "pitch": "+2Hz",
+        "rate_bias": -0.03,
     },
     {
         "id": "en-US-BrianMultilingualNeural",
