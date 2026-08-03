@@ -1,0 +1,10 @@
+name	size	hash	status
+beo	11376	b8da9b86	ok
+map	11664	b18e9c60	ok
+be_zwsp_o	12672	dd3ffd3d	ok
+be_zwsp2	13104	0db07847	ok
+be_apostrophe	12240	f3de502b	ok
+beo_paren	0		FAIL No audio was received. Please verify that your parameters are correct.
+nhieu_mo	13104	d111f4b2	ok
+beo_phe	12816	16f7d969	ok
+than_hinh_to	14112	7f654575	ok

@@ -1,0 +1,6 @@
+plain: OK size=10656
+sub_ascii: FAIL No audio was received. Please verify that your parameters are correct.
+sub_map: FAIL No audio was received. Please verify that your parameters are correct.
+sub_be_o: FAIL No audio was received. Please verify that your parameters are correct.
+zwsp: OK size=11088
+syn_map: FAIL No audio was received. Please verify that your parameters are correct.

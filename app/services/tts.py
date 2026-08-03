@@ -117,6 +117,33 @@ def _sanitize_text(text: str) -> str:
     return t
 
 
+# Edge Vietnamese (Nam Minh / Hoài My) often misreads short words (béo→báo).
+# SSML <sub>/<phoneme> is NOT supported for vi-VN Neural (returns no audio),
+# and mild respellings (bééo, bé-o…) still collapse to "báo".
+# Use spoken synonyms for AUDIO only; karaoke/subtitles keep the original spelling.
+_VI_WORD = r"[\w\u00C0-\u024F\u1E00-\u1EFF]"
+_VI_BEO_RE = re.compile(rf"(?<!{_VI_WORD})béo(?!{_VI_WORD})", re.IGNORECASE)
+
+
+def _beo_to_map(match: re.Match[str]) -> str:
+    word = match.group(0)
+    if word.isupper():
+        return "MẬP"
+    if word[:1].isupper():
+        return "Mập"
+    return "mập"
+
+
+def _apply_pronunciation_fixes(text: str) -> str:
+    """Respell tricky Vietnamese words so Edge TTS keeps the right vowel/tone."""
+    import unicodedata
+
+    out = unicodedata.normalize("NFC", text or "")
+    # béo → mập: clearest reliable fix for Nam Minh (subtitle still shows "béo")
+    out = _VI_BEO_RE.sub(_beo_to_map, out)
+    return out
+
+
 def _word_weight(word: str) -> float:
     # Vietnamese: weight by letters (better than equal slots)
     letters = re.findall(r"[\w\u00C0-\u024F\u1E00-\u1EFF]", word, re.UNICODE)
@@ -691,6 +718,7 @@ async def synthesize_with_subtitles(
     from app.config import resolve_voice
 
     text = _sanitize_text(text)
+    speak_text = _apply_pronunciation_fixes(text)
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     profile = resolve_voice(voice)
     edge_voice = profile.get("edge_voice") or voice
@@ -703,17 +731,20 @@ async def synthesize_with_subtitles(
     # Edge often rejects / hangs on extreme rate with Vietnamese long text
     effective_speed = round(max(0.85, min(1.15, effective_speed)), 2)
     rate = speed_to_edge_rate(effective_speed)
-    cache_key = _cache_key(text, str(edge_voice), rate, pitch)
+    # Cache by spoken form so pronunciation fixes invalidate old bad audio
+    cache_key = _cache_key(speak_text, str(edge_voice), rate, pitch)
 
     cached = _load_cached(audio_path, cache_key)
     if cached is not None:
+        cached = _align_cue_text(cached, text)
         _write_vtt(cached, text, vtt_path)
         return audio_path, vtt_path, cached, True
 
     try:
         cues = await _synthesize_chunked(
-            text, str(edge_voice), audio_path, rate=rate, pitch=pitch
+            speak_text, str(edge_voice), audio_path, rate=rate, pitch=pitch
         )
+        cues = _align_cue_text(cues, text)
     except Exception as edge_exc:
         raise RuntimeError(
             f"Không tạo được giọng đọc với đúng giọng đã chọn ({voice}).\n"

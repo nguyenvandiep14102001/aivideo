@@ -1,0 +1,14 @@
+OK  11376  người béo quá
+OK  11376  người bééo quá
+OK  11520  người bếo quá
+FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct. | người bê o quá
+OK  12528  người bé-o quá
+OK  11376  người béo quá
+OK  11520  người béọ quá
+OK  11520  người bếo quá
+OK  12816  người bè o quá
+OK  11952  người 'béo' quá
+OK  95904  <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN">người <sub alias="
+OK  97200  <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN">người <sub alias="
+FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct. | <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN
+OK 106848  <speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="vi-VN">người <phoneme alp

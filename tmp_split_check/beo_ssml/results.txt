@@ -1,0 +1,9 @@
+00_baseline      alias=plain                 1.78s  10656b
+a_be_acute_o     FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+b_be_space_o     FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+c_be_hyphen      FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+d_beo_plain      FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+e_map            FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+f_beo_sắc        FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+g_phonetic       FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.
+h_bêó            FAIL NoAudioReceived: No audio was received. Please verify that your parameters are correct.

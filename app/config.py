@@ -14,17 +14,20 @@ VIDEO_FPS = 24  # default balanced; project can override 20/24/30
 
 DEFAULT_VOICE = "vi-VN-HoaiMyNeural"
 # edge_voice = real Edge TTS id; pitch / rate_bias customize delivery
+# Note: Edge only has 2 native Vietnamese voices (Hoài My / Nam Minh).
+# Multilingual male voices can read Vietnamese with a foreign accent but often
+# handle tricky words (béo/báo…) differently — useful as alternatives.
 VOICES = [
     {
         "id": "vi-VN-HoaiMyNeural",
-        "label": "Hoài My (nữ)",
+        "label": "Hoài My (nữ · Việt)",
         "edge_voice": "vi-VN-HoaiMyNeural",
         "pitch": "+0Hz",
         "rate_bias": 0.0,
     },
     {
         "id": "vi-VN-NamMinhNeural",
-        "label": "Nam Minh (nam)",
+        "label": "Nam Minh (nam · Việt)",
         "edge_voice": "vi-VN-NamMinhNeural",
         "pitch": "+0Hz",
         "rate_bias": 0.0,
@@ -38,29 +41,71 @@ VOICES = [
         "rate_bias": -0.03,
     },
     {
+        "id": "vi-VN-NamMinh-Deep",
+        "label": "Nam Minh trầm (nam · trầm hơn)",
+        "edge_voice": "vi-VN-NamMinhNeural",
+        "pitch": "-8Hz",
+        "rate_bias": -0.02,
+    },
+    {
         "id": "en-US-BrianMultilingualNeural",
-        "label": "Brian (nam đa ngữ · ấm)",
+        "label": "Brian (nam · Mỹ đa ngữ · ấm)",
         "edge_voice": "en-US-BrianMultilingualNeural",
         "pitch": "+2Hz",
         "rate_bias": -0.04,
     },
     {
         "id": "en-US-AndrewMultilingualNeural",
-        "label": "Andrew (nam đa ngữ · truyền cảm)",
+        "label": "Andrew (nam · Mỹ đa ngữ · truyền cảm)",
         "edge_voice": "en-US-AndrewMultilingualNeural",
         "pitch": "+6Hz",
         "rate_bias": -0.05,
     },
     {
+        "id": "en-AU-WilliamMultilingualNeural",
+        "label": "William (nam · Úc đa ngữ)",
+        "edge_voice": "en-AU-WilliamMultilingualNeural",
+        "pitch": "+0Hz",
+        "rate_bias": -0.03,
+    },
+    {
+        "id": "fr-FR-RemyMultilingualNeural",
+        "label": "Rémy (nam · Pháp đa ngữ)",
+        "edge_voice": "fr-FR-RemyMultilingualNeural",
+        "pitch": "+0Hz",
+        "rate_bias": -0.03,
+    },
+    {
+        "id": "de-DE-FlorianMultilingualNeural",
+        "label": "Florian (nam · Đức đa ngữ)",
+        "edge_voice": "de-DE-FlorianMultilingualNeural",
+        "pitch": "-2Hz",
+        "rate_bias": -0.03,
+    },
+    {
+        "id": "it-IT-GiuseppeMultilingualNeural",
+        "label": "Giuseppe (nam · Ý đa ngữ)",
+        "edge_voice": "it-IT-GiuseppeMultilingualNeural",
+        "pitch": "+0Hz",
+        "rate_bias": -0.03,
+    },
+    {
+        "id": "ko-KR-HyunsuMultilingualNeural",
+        "label": "Hyunsu (nam · Hàn đa ngữ)",
+        "edge_voice": "ko-KR-HyunsuMultilingualNeural",
+        "pitch": "+0Hz",
+        "rate_bias": -0.03,
+    },
+    {
         "id": "en-US-JennyNeural",
-        "label": "Jenny (EN female)",
+        "label": "Jenny (nữ · tiếng Anh)",
         "edge_voice": "en-US-JennyNeural",
         "pitch": "+0Hz",
         "rate_bias": 0.0,
     },
     {
         "id": "en-US-GuyNeural",
-        "label": "Guy (EN male)",
+        "label": "Guy (nam · tiếng Anh)",
         "edge_voice": "en-US-GuyNeural",
         "pitch": "+0Hz",
         "rate_bias": 0.0,
