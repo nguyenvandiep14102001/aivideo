@@ -6,3 +6,9 @@ venv/
 *.mp4
 *.mp3
 app/**/frames/
+.env
+*.json.bak
+data/facebook.json
+data/facebook_app.json
+data/facebook_oauth_state.json
+

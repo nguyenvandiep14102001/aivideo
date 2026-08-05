@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from app.config import CHARACTER_POSITIONS, STATIC_DIR, TEMPLATES_DIR, VOICES, ensure_dirs
 from app.services import characters as character_store
+from app.services import facebook as facebook_store
 from app.services import projects as project_store
 from app.services import sfx as sfx_store
 from app.services.renderer import RenderCancelled, apply_sfx_export, render_project
@@ -110,7 +111,9 @@ def _get_render_progress(project_id: str) -> dict:
 
 
 def _render(request: Request, name: str, **ctx):
-    return templates.TemplateResponse(request=request, name=name, context=ctx)
+    # Always include request in context for widest Starlette/FastAPI compatibility
+    context = {"request": request, **ctx}
+    return templates.TemplateResponse(request, name, context)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -146,6 +149,8 @@ async def project_page(request: Request, project_id: str):
     duration = project.get("duration_sec") or sfx_store.estimate_script_duration(
         project.get("script", "")
     )
+    fb = facebook_store.merge_facebook_for_ui(project.get("facebook"))
+    project["facebook"] = fb
     return _render(
         request,
         "project.html",
@@ -157,6 +162,7 @@ async def project_page(request: Request, project_id: str):
         positions=CHARACTER_POSITIONS,
         sfx_list=sfx_store.list_sfx(),
         timeline_duration=duration,
+        facebook=fb,
     )
 
 
@@ -492,6 +498,136 @@ async def export_with_sfx(project_id: str, payload: dict = Body(default=None)):
             "output_file": out.name,
             "url": f"/projects/{project_id}/video?t={project['updated_at']}",
             "clips": project.get("sfx_clips") or [],
+        }
+    )
+
+
+@app.post("/api/projects/{project_id}/facebook")
+async def save_facebook_settings(project_id: str, payload: dict = Body(...)):
+    """Save Facebook Page settings. Empty token keeps previous token."""
+    try:
+        project = project_store.load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+
+    fb = facebook_store.normalize_facebook(project.get("facebook"))
+    if "page_id" in payload and payload["page_id"] is not None:
+        fb["page_id"] = str(payload["page_id"]).strip()
+    if "caption" in payload and payload["caption"] is not None:
+        fb["caption"] = str(payload["caption"])
+    if "access_token" in payload and payload["access_token"] is not None:
+        token = str(payload["access_token"]).strip()
+        if token:
+            fb["access_token"] = token
+    project["facebook"] = fb
+    project_store.save_project(project)
+
+    if fb["page_id"] or fb.get("access_token"):
+        facebook_store.save_app_defaults(
+            page_id=fb["page_id"],
+            access_token=fb.get("access_token") or "",
+        )
+
+    merged = facebook_store.merge_facebook_for_ui(fb)
+    return JSONResponse(
+        {
+            "ok": True,
+            "facebook": facebook_store.public_facebook(merged),
+        }
+    )
+
+
+@app.post("/api/projects/{project_id}/facebook/pages")
+async def list_facebook_pages(project_id: str, payload: dict = Body(default=None)):
+    """List Pages managed by pasted User token."""
+    try:
+        project = project_store.load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+
+    fb = facebook_store.merge_facebook_for_ui(project.get("facebook"))
+    data = payload if isinstance(payload, dict) else {}
+    token = str(data.get("access_token") or fb.get("access_token") or "").strip()
+    if not token:
+        raise HTTPException(
+            400,
+            "Chưa có token. Dán User token từ Graph API Explorer trước.",
+        )
+    try:
+        pages = await facebook_store.list_managed_pages(token)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(500, f"Không lấy được danh sách Page: {exc}") from exc
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "pages": [
+                {"id": p["id"], "name": p["name"], "access_token": p["access_token"]}
+                for p in pages
+            ],
+        }
+    )
+
+
+@app.post("/api/projects/{project_id}/facebook/publish")
+async def publish_facebook(project_id: str, payload: dict = Body(default=None)):
+    """Upload rendered MP4 to the configured Facebook Page."""
+    from datetime import datetime, timezone
+
+    try:
+        project = project_store.load_project(project_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Project not found")
+
+    fb = facebook_store.merge_facebook_for_ui(project.get("facebook"))
+    data = payload if isinstance(payload, dict) else {}
+    if data.get("page_id"):
+        fb["page_id"] = str(data["page_id"]).strip()
+    if data.get("caption") is not None:
+        fb["caption"] = str(data["caption"])
+    if data.get("access_token"):
+        fb["access_token"] = str(data["access_token"]).strip()
+
+    out_name = project.get("output_file") or "video.mp4"
+    video_path = project_store.project_dir(project_id) / "output" / Path(out_name).name
+    if project.get("status") != "ready" or not video_path.exists():
+        raise HTTPException(400, "Chưa có video sẵn. Hãy Render (và xuất SFX nếu cần) trước.")
+
+    try:
+        result = await facebook_store.upload_page_video(
+            page_id=fb["page_id"],
+            access_token=fb["access_token"] or session.get("user_token") or "",
+            video_path=video_path,
+            caption=fb.get("caption") or "",
+            title=str(project.get("title") or "AIvideo"),
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        fb["last_error"] = str(exc)
+        project["facebook"] = facebook_store.normalize_facebook(fb)
+        project_store.save_project(project)
+        raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        fb["last_error"] = str(exc)
+        project["facebook"] = facebook_store.normalize_facebook(fb)
+        project_store.save_project(project)
+        raise HTTPException(500, str(exc)) from exc
+
+    if result.get("page_id"):
+        fb["page_id"] = str(result["page_id"])
+    fb["last_post_id"] = result["id"]
+    fb["last_error"] = None
+    fb["last_posted_at"] = datetime.now(timezone.utc).isoformat()
+    project["facebook"] = facebook_store.normalize_facebook(fb)
+    project_store.save_project(project)
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "post_id": result["id"],
+            "page_name": result.get("page_name"),
+            "facebook": facebook_store.public_facebook(fb),
         }
     )
 

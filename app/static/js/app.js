@@ -954,6 +954,200 @@
 
   refreshFramePreviews();
 
+  // ---- Facebook Page publish (paste token) ----
+  const fbPanel = document.getElementById("fb-panel");
+  const fbDetails = document.getElementById("fb-details");
+  const fbPageId = document.getElementById("fb-page-id");
+  const fbToken = document.getElementById("fb-token");
+  const fbCaption = document.getElementById("fb-caption");
+  const fbPageSelect = document.getElementById("fb-page-select");
+  const fbLoadPagesBtn = document.getElementById("fb-load-pages-btn");
+  const fbPagesHint = document.getElementById("fb-pages-hint");
+  const fbSaveBtn = document.getElementById("fb-save-btn");
+  const fbPublishBtn = document.getElementById("fb-publish-btn");
+  const fbStatus = document.getElementById("fb-status");
+  let fbReady = false;
+  let fbPagesCache = [];
+
+  function fbApiError(detail, fallback) {
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail) && detail[0] && detail[0].msg) return detail[0].msg;
+    return fallback;
+  }
+
+  function setFbStatus(msg) {
+    if (fbStatus) fbStatus.textContent = msg || "";
+  }
+
+  function setFbPagesHint(msg) {
+    if (fbPagesHint) fbPagesHint.textContent = msg || "";
+  }
+
+  function resetPagePicker(msg) {
+    fbPagesCache = [];
+    if (fbPageSelect) {
+      fbPageSelect.innerHTML = `<option value="">— Bấm 「Lấy danh sách Page」—</option>`;
+    }
+    setFbPagesHint(msg || "");
+  }
+
+  function syncFbPublishEnabled() {
+    if (!fbPublishBtn || !fbPanel) return;
+    const ready = fbPanel.getAttribute("data-ready") === "1" || status === "ready";
+    fbPublishBtn.disabled = !ready;
+  }
+
+  function onFbOpened() {
+    if (fbReady) return;
+    fbReady = true;
+    syncFbPublishEnabled();
+    setFbStatus("Dán token → Lấy danh sách Page → chọn Page → Đăng.");
+  }
+
+  function collectFbPayload() {
+    const selected = fbPagesCache.find((p) => p.id === (fbPageSelect && fbPageSelect.value));
+    return {
+      page_id: (fbPageId && fbPageId.value) || "",
+      access_token: (selected && selected.access_token) || (fbToken && fbToken.value) || "",
+      page_name: (selected && selected.name) || "",
+      caption: (fbCaption && fbCaption.value) || "",
+    };
+  }
+
+  function fillPageSelect(pages, preferredId) {
+    fbPagesCache = Array.isArray(pages) ? pages : [];
+    if (!fbPageSelect) return;
+    if (!fbPagesCache.length) {
+      fbPageSelect.innerHTML = `<option value="">— Không có Page —</option>`;
+      return;
+    }
+    const pref = preferredId || (fbPageId && fbPageId.value) || "";
+    fbPageSelect.innerHTML = fbPagesCache.map((p) => {
+      const sel = p.id === pref ? " selected" : "";
+      const label = `${p.name} (${p.id})`.replace(/</g, "&lt;");
+      return `<option value="${p.id}"${sel}>${label}</option>`;
+    }).join("");
+    const chosen =
+      fbPagesCache.find((p) => p.id === (fbPageSelect.value || pref)) ||
+      fbPagesCache[0];
+    if (chosen) applySelectedPage(chosen);
+  }
+
+  function applySelectedPage(page) {
+    if (!page) return;
+    if (fbPageId) fbPageId.value = page.id || "";
+    if (page.access_token && fbToken) fbToken.value = page.access_token;
+    setFbPagesHint(`Đã chọn: ${page.name || page.id}`);
+  }
+
+  if (fbToken) {
+    fbToken.addEventListener("input", () => resetPagePicker());
+    fbToken.addEventListener("change", () => resetPagePicker());
+  }
+
+  if (fbDetails) {
+    fbDetails.addEventListener("toggle", () => {
+      if (fbDetails.open) onFbOpened();
+    });
+    if (fbDetails.open) onFbOpened();
+  }
+
+  if (fbPageSelect) {
+    fbPageSelect.addEventListener("change", () => {
+      const page = fbPagesCache.find((p) => p.id === fbPageSelect.value);
+      applySelectedPage(page);
+    });
+  }
+
+  if (fbLoadPagesBtn) {
+    fbLoadPagesBtn.addEventListener("click", async () => {
+      const token = (fbToken && fbToken.value) || "";
+      if (!token.trim()) {
+        setFbStatus("Dán User token trước khi lấy danh sách Page.");
+        return;
+      }
+      fbLoadPagesBtn.disabled = true;
+      setFbPagesHint("Đang lấy danh sách Page…");
+      try {
+        const res = await fetch(`/api/projects/${projectId}/facebook/pages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ access_token: token }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(fbApiError(data.detail, "Không lấy được Page"));
+        fillPageSelect(data.pages || [], (fbPageId && fbPageId.value) || "");
+        setFbPagesHint(`Tìm thấy ${(data.pages || []).length} Page.`);
+        setFbStatus("Chọn Page → Lưu → Đăng video.");
+      } catch (err) {
+        resetPagePicker(err.message || "Lỗi lấy Page");
+        setFbStatus(err.message || "Lỗi lấy Page");
+      } finally {
+        fbLoadPagesBtn.disabled = false;
+      }
+    });
+  }
+
+  if (fbSaveBtn) {
+    fbSaveBtn.addEventListener("click", async () => {
+      fbSaveBtn.disabled = true;
+      setFbStatus("Đang lưu cấu hình…");
+      try {
+        const res = await fetch(`/api/projects/${projectId}/facebook`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(collectFbPayload()),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(fbApiError(data.detail, "Lỗi lưu Facebook"));
+        window.AIVIDEO_FACEBOOK = data.facebook || window.AIVIDEO_FACEBOOK;
+        setFbStatus("Đã lưu cấu hình Facebook.");
+      } catch (err) {
+        setFbStatus(err.message || "Lỗi lưu");
+      } finally {
+        fbSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  if (fbPublishBtn) {
+    fbPublishBtn.addEventListener("click", async () => {
+      if (!confirm("Đăng video hiện tại lên Facebook Page?")) return;
+      fbPublishBtn.disabled = true;
+      if (fbSaveBtn) fbSaveBtn.disabled = true;
+      setFbStatus("Đang upload lên Facebook… (có thể mất vài phút)");
+      try {
+        const res = await fetch(`/api/projects/${projectId}/facebook/publish`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(collectFbPayload()),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(fbApiError(data.detail, "Đăng Facebook thất bại"));
+        }
+        window.AIVIDEO_FACEBOOK = data.facebook || window.AIVIDEO_FACEBOOK;
+        const pageLabel = data.page_name ? ` · ${data.page_name}` : "";
+        setFbStatus(`Đã đăng thành công · id ${data.post_id}${pageLabel}`);
+      } catch (err) {
+        setFbStatus(err.message || "Lỗi đăng Facebook");
+      } finally {
+        syncFbPublishEnabled();
+        if (fbSaveBtn) fbSaveBtn.disabled = false;
+      }
+    });
+  }
+
+  if (videoBox) {
+    const mo = new MutationObserver(() => {
+      if (!videoBox.classList.contains("hidden") && fbPanel) {
+        fbPanel.setAttribute("data-ready", "1");
+        if (fbReady) syncFbPublishEnabled();
+      }
+    });
+    mo.observe(videoBox, { attributes: true, attributeFilter: ["class"] });
+  }
+
   buildRuler();
   renderClips();
   updateRenderControls();

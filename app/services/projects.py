@@ -52,6 +52,14 @@ def _defaults() -> dict[str, Any]:
         "base_file": None,
         "scene_setup": [],
         "script_count": 1,
+        "facebook": {
+            "page_id": "",
+            "access_token": "",
+            "caption": "",
+            "last_post_id": None,
+            "last_error": None,
+            "last_posted_at": None,
+        },
     }
 
 
@@ -109,6 +117,9 @@ def normalize_project(data: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         sc = 1
     data["script_count"] = max(1, min(6, sc))
+    from app.services.facebook import normalize_facebook
+
+    data["facebook"] = normalize_facebook(data.get("facebook"))
     return data
 
 

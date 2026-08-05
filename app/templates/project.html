@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% set fb = facebook if facebook is defined else (project.facebook or {}) %}
 {% block title %}{{ project.title }} · AIvideo{% endblock %}
 {% block content %}
 <nav class="crumb">
@@ -7,6 +8,63 @@
 
 <section class="editor">
   <div class="editor-col">
+    <div class="panel facebook-panel" id="fb-panel"
+         data-ready="{{ '1' if project.status == 'ready' and project.output_file else '0' }}">
+      <details class="fb-details" id="fb-details">
+        <summary class="fb-tab-toggle" id="fb-open-btn">
+          <span>Đăng Facebook Page</span>
+          <span class="fb-tab-chevron" aria-hidden="true">▼</span>
+        </summary>
+        <div class="fb-config" id="fb-config">
+          <p class="hint">
+            <strong>Không dùng User/Profile ID</strong> (vd. 6159…).
+            Dán <strong>User token</strong> từ Graph API Explorer → bấm <strong>Lấy danh sách Page</strong> → chọn Page.
+            App tự điền Page ID + Page token. Cần quyền
+            <code>pages_show_list</code>, <code>pages_manage_posts</code>.
+          </p>
+          <label class="field">
+            <span>Facebook token (User token hoặc Page token)</span>
+            <input type="password" id="fb-token" value="{{ fb.access_token or '' }}"
+                   placeholder="EAA…" autocomplete="off" />
+          </label>
+          <div class="row wrap timeline-actions">
+            <button type="button" class="btn ghost" id="fb-load-pages-btn">Lấy danh sách Page</button>
+            <span class="hint" id="fb-pages-hint"></span>
+          </div>
+          <label class="field">
+            <span>Chọn Page</span>
+            <select id="fb-page-select">
+              <option value="">— Bấm 「Lấy danh sách Page」—</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Page ID</span>
+            <input type="text" id="fb-page-id" value="{{ fb.page_id or '' }}"
+                   placeholder="Tự điền khi chọn Page" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Caption đăng</span>
+            <textarea id="fb-caption" rows="4"
+                      placeholder="Nội dung kèm video khi đăng lên Page…">{{ fb.caption or '' }}</textarea>
+          </label>
+          <div class="row wrap timeline-actions">
+            <button type="button" class="btn ghost" id="fb-save-btn">Lưu cấu hình</button>
+            <button type="button" class="btn primary" id="fb-publish-btn"
+              {% if not (project.status == 'ready' and project.output_file) %}disabled{% endif %}>
+              Đăng video lên Page
+            </button>
+            <span class="hint" id="fb-status">
+              {% if fb.last_post_id %}
+                Đã đăng · id {{ fb.last_post_id }}
+              {% elif fb.last_error %}
+                Lỗi trước: {{ fb.last_error }}
+              {% endif %}
+            </span>
+          </div>
+        </div>
+      </details>
+    </div>
+
     <form class="editor-form" method="post" action="/projects/{{ project.id }}/save" id="save-form">
       <div class="editor-main">
         <label class="field">
@@ -451,6 +509,7 @@
   window.AIVIDEO_IMAGES = {{ project.images|tojson }};
   window.AIVIDEO_IMAGE_FRAMES = {{ project.image_frames|tojson }};
   window.AIVIDEO_SCRIPT_COUNT = {{ project.script_count|int }};
+  window.AIVIDEO_FACEBOOK = {{ fb|tojson }};
 </script>
-<script src="/static/js/app.js?v=11"></script>
+<script src="/static/js/app.js?v=20"></script>
 {% endblock %}

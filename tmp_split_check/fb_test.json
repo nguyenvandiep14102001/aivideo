@@ -1,0 +1,32 @@
+{
+  "me": {
+    "id": "2284849348931074",
+    "name": "Nguyễn Văn Điệp"
+  },
+  "pages": [
+    {
+      "id": "1205308802671951",
+      "name": "TuTi Biết Tuốt",
+      "has_page_token": true
+    },
+    {
+      "id": "340430292481532",
+      "name": "Nồi Hơi Tấc Thắm",
+      "has_page_token": true
+    }
+  ],
+  "permissions": [
+    {
+      "permission": "pages_show_list",
+      "status": "granted"
+    },
+    {
+      "permission": "business_management",
+      "status": "granted"
+    },
+    {
+      "permission": "public_profile",
+      "status": "granted"
+    }
+  ]
+}

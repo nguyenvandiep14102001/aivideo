@@ -28,11 +28,25 @@ def _ffmpeg() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def _run_ffmpeg(cmd: list[str], label: str) -> None:
+def _run_ffmpeg(cmd: list[str], label: str, *, expect_file: Path | None = None) -> None:
     result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        err = (result.stderr or result.stdout or "")[-1500:]
-        raise RuntimeError(f"FFmpeg failed ({label}):\n{err}")
+    if result.returncode == 0:
+        return
+    err = (result.stderr or result.stdout or "")[-1500:]
+    # Ctrl+C / signal 2 can hit the child after encode already finished.
+    if expect_file is not None:
+        try:
+            ok_size = expect_file.exists() and expect_file.stat().st_size > 1024
+        except OSError:
+            ok_size = False
+        if ok_size and (
+            "signal 2" in err
+            or "Exiting normally" in err
+            or "muxing overhead" in err
+            or "Lsize=" in err
+        ):
+            return
+    raise RuntimeError(f"FFmpeg failed ({label}):\n{err}")
 
 
 def _audio_duration(path: Path) -> float:
@@ -932,6 +946,7 @@ def _mix_audio_with_sfx(
                 str(mixed),
             ],
             "voice-encode",
+            expect_file=mixed,
         )
         return mixed
 
@@ -982,6 +997,7 @@ def _mix_audio_with_sfx(
             str(mixed),
         ],
         "sfx-mix",
+        expect_file=mixed,
     )
     return mixed
 
@@ -1302,6 +1318,7 @@ async def render_project(
             str(merged_voice),
         ],
         "concat-voice",
+        expect_file=merged_voice,
     )
 
     mixed_audio = _mix_audio_with_sfx(
@@ -1347,6 +1364,7 @@ async def render_project(
             str(base_mp4),
         ],
         "encode-mp4",
+        expect_file=base_mp4,
     )
 
     if not base_mp4.exists() or base_mp4.stat().st_size < 1000:
@@ -1453,6 +1471,7 @@ def apply_sfx_export(project: dict, project_folder: Path) -> Path:
             str(tmp),
         ],
         "apply-sfx",
+        expect_file=tmp,
     )
     import shutil
 
