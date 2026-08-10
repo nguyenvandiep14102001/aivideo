@@ -147,15 +147,75 @@ def _fit_contain(img: Image.Image, width: int, height: int, bg=(235, 235, 238)) 
 
 
 _FONT_CACHE: dict[tuple[int, bool], ImageFont.ImageFont] = {}
-_STUDIO_BG: Image.Image | None = None
+_CLASSROOM_BG: Image.Image | None = None
 _FOCUS_BG: dict[str, Image.Image] = {}
 _CHAR_CACHE: dict[str, Image.Image] = {}
 _PANEL_FIT_CACHE: dict[tuple, Image.Image] = {}
 
+# Compare layout — mint wall + wood floor (reference explainer style)
+_WALL_COLOR = (216, 242, 237)
+_FLOOR_COLOR = (118, 72, 34)
+_FLOOR_PLANK = (100, 60, 28)
+_FLOOR_RATIO = 0.16
+_TITLE_GREEN = (72, 210, 72)
+_TITLE_RED = (228, 48, 48)
+_FRAME_LEFT = (32, 32, 32)
+_FRAME_RIGHT = (92, 58, 30)
+_KARAOKE_SPOKEN = (255, 255, 255)
+_KARAOKE_ACTIVE = (72, 210, 72)
+_KARAOKE_UPCOMING = (255, 255, 255)
+RENDER_STYLE = "classroom_v2b"
+
+
+def _floor_top() -> int:
+    return VIDEO_HEIGHT - int(VIDEO_HEIGHT * _FLOOR_RATIO)
+
+
+def _draw_text_stroked(
+    draw: ImageDraw.ImageDraw,
+    xy: tuple[float, float],
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int],
+    *,
+    stroke: tuple[int, int, int] = (0, 0, 0),
+    stroke_width: int = 3,
+) -> None:
+    x, y = xy
+    sw = max(1, stroke_width)
+    for dx in range(-sw, sw + 1):
+        for dy in range(-sw, sw + 1):
+            if dx or dy:
+                draw.text((x + dx, y + dy), text, font=font, fill=stroke)
+    draw.text((x, y), text, font=font, fill=fill)
+
+
+def _draw_text_stroked_center(
+    draw: ImageDraw.ImageDraw,
+    cx: float,
+    y: float,
+    text: str,
+    font: ImageFont.ImageFont,
+    fill: tuple[int, int, int],
+    *,
+    stroke: tuple[int, int, int] = (0, 0, 0),
+    stroke_width: int = 3,
+) -> None:
+    tw = draw.textlength(text, font=font)
+    _draw_text_stroked(
+        draw,
+        (cx - tw / 2, y),
+        text,
+        font,
+        fill,
+        stroke=stroke,
+        stroke_width=stroke_width,
+    )
+
 
 def _clear_render_caches() -> None:
-    global _STUDIO_BG
-    _STUDIO_BG = None
+    global _CLASSROOM_BG
+    _CLASSROOM_BG = None
     _FOCUS_BG.clear()
     _CHAR_CACHE.clear()
     _PANEL_FIT_CACHE.clear()
@@ -328,64 +388,30 @@ def _build_studio_bg() -> Image.Image:
     return Image.alpha_composite(img, vignette).convert("RGB")
 
 
+def _build_classroom_bg() -> Image.Image:
+    """Mint wall + brown wood floor (explainer / compare layout)."""
+    canvas = Image.new("RGB", (VIDEO_WIDTH, VIDEO_HEIGHT), _WALL_COLOR)
+    draw = ImageDraw.Draw(canvas)
+    floor_top = _floor_top()
+    draw.rectangle((0, floor_top, VIDEO_WIDTH, VIDEO_HEIGHT), fill=_FLOOR_COLOR)
+    plank_h = max(8, (VIDEO_HEIGHT - floor_top) // 6)
+    for i in range(6):
+        y = floor_top + i * plank_h
+        draw.line((0, y, VIDEO_WIDTH, y), fill=_FLOOR_PLANK, width=2)
+    # Soft floor edge shadow
+    for i, alpha in enumerate((28, 14, 6)):
+        y = floor_top + i
+        draw.line((0, y, VIDEO_WIDTH, y), fill=(80, 48, 22), width=1)
+    return canvas
+
+
 def _paper_bg(t: float = 0.0, focus: str = POSE_CENTER) -> Image.Image:
-    """Idea-studio background with pulsing bulb glow + soft spotlight."""
-    global _STUDIO_BG
-    phase = int((max(0.0, t) * 2.2) % 6)
-    cache_key = (focus, phase)
-    cached = _FOCUS_BG.get(cache_key)
-    if cached is not None:
-        return cached.copy()
-
-    if _STUDIO_BG is None:
-        _STUDIO_BG = _build_studio_bg()
-    canvas = _STUDIO_BG.copy().convert("RGBA")
-    light = Image.new("RGBA", (VIDEO_WIDTH, VIDEO_HEIGHT), (0, 0, 0, 0))
-    ld = ImageDraw.Draw(light)
-
-    import math
-
-    pulse = 0.78 + 0.18 * math.sin(phase * 1.05)
-    # Hero bulb pulse
-    bx, by = VIDEO_WIDTH // 2, 150
-    for i, (rad, alpha) in enumerate(
-        ((110, int(50 * pulse)), (170, int(28 * pulse)), (240, int(12 * pulse)))
-    ):
-        ld.ellipse(
-            (bx - rad, by - rad + 20, bx + rad, by + rad + 40),
-            fill=(255, 210, 90, alpha),
-        )
-
-    shimmer = int(10 + 12 * pulse)
-    drift_x = int(18 * math.sin(phase * 0.9))
-    drift_y = int(10 * math.cos(phase * 0.7))
-    ld.ellipse(
-        (
-            VIDEO_WIDTH * 0.2 + drift_x,
-            40 + drift_y,
-            VIDEO_WIDTH * 0.8 + drift_x,
-            VIDEO_HEIGHT * 0.4 + drift_y,
-        ),
-        fill=(255, 248, 220, shimmer),
-    )
-
-    if focus == POSE_POINT_1:
-        cx0, cx1 = 40, VIDEO_WIDTH // 2 - 10
-    elif focus == POSE_POINT_2:
-        cx0, cx1 = VIDEO_WIDTH // 2 + 10, VIDEO_WIDTH - 40
-    else:
-        cx0, cx1 = VIDEO_WIDTH * 0.22, VIDEO_WIDTH * 0.78
-
-    for i, alpha in enumerate((int(64 * pulse), int(36 * pulse), int(18 * pulse))):
-        pad = 28 + i * 34
-        ld.ellipse(
-            (cx0 - pad, 36 - i * 8, cx1 + pad, VIDEO_HEIGHT * 0.46 + pad),
-            fill=(255, 220, 150, alpha) if focus != POSE_CENTER else (255, 245, 220, alpha // 2),
-        )
-
-    canvas = Image.alpha_composite(canvas, light).convert("RGB")
-    _FOCUS_BG[cache_key] = canvas
-    return canvas.copy()
+    """Static classroom backdrop (mint + floor)."""
+    global _CLASSROOM_BG
+    _ = t, focus
+    if _CLASSROOM_BG is None:
+        _CLASSROOM_BG = _build_classroom_bg()
+    return _CLASSROOM_BG.copy()
 
 
 def _normalize_frame(frame: dict | None) -> dict:
@@ -399,18 +425,14 @@ def _normalize_frame(frame: dict | None) -> dict:
 
 
 def _tone_panel_image(fitted: Image.Image, *, active: bool, dimmed: bool) -> Image.Image:
-    """Brighten the spoken panel; gently dim the other."""
+    """Slight brighten/dim for active vs inactive panel."""
     img = fitted
     if active:
-        img = ImageEnhance.Brightness(img).enhance(1.22)
-        img = ImageEnhance.Contrast(img).enhance(1.12)
-        img = ImageEnhance.Color(img).enhance(1.08)
+        img = ImageEnhance.Brightness(img).enhance(1.08)
+        img = ImageEnhance.Contrast(img).enhance(1.05)
     elif dimmed:
-        img = ImageEnhance.Brightness(img).enhance(0.68)
-        img = ImageEnhance.Color(img).enhance(0.78)
-        img = ImageEnhance.Contrast(img).enhance(0.92)
-    else:
-        img = ImageEnhance.Brightness(img).enhance(1.04)
+        img = ImageEnhance.Brightness(img).enhance(0.82)
+        img = ImageEnhance.Contrast(img).enhance(0.94)
     return img
 
 
@@ -424,46 +446,30 @@ def _draw_panel(
     frame: dict | None = None,
     dimmed: bool = False,
     t: float = 0.0,
+    side: str = "left",
 ) -> None:
     x0, y0, x1, y1 = box
     w, h = x1 - x0, y1 - y0
     draw = ImageDraw.Draw(canvas)
+    _ = label, t
 
-    # Soft outer glow for active panel (static — no per-frame pulse)
-    if active:
-        glow = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        gd = ImageDraw.Draw(glow)
-        pulse = 0.9
-        for i, alpha in enumerate((int(90 * pulse), int(55 * pulse), int(28 * pulse))):
-            pad = 18 + i * 14
-            gd.rounded_rectangle(
-                (x0 - pad, y0 - pad, x1 + pad, y1 + pad + 12),
-                radius=24 + i * 4,
-                fill=(255, 170, 110, alpha),
-            )
-        canvas_rgba = Image.alpha_composite(canvas.convert("RGBA"), glow)
-        canvas.paste(canvas_rgba.convert("RGB"))
-        draw = ImageDraw.Draw(canvas)
+    frame_outer = _FRAME_LEFT if side == "left" else _FRAME_RIGHT
+    border = 10 if active else 8
+    pad = 6
 
-    if active:
-        frame_color = (36, 28, 24)
-        rim = (255, 140, 70)
-    elif dimmed:
-        frame_color = (120, 118, 122)
-        rim = (170, 168, 174)
-    else:
-        frame_color = (78, 74, 80)
-        rim = (140, 136, 142)
-
-    draw.rounded_rectangle((x0 - 8, y0 - 8, x1 + 8, y1 + 18), radius=18, fill=frame_color)
-    draw.rounded_rectangle((x0, y0, x1, y1), radius=10, fill=(20, 20, 24))
+    # Thick portrait frame
+    draw.rectangle((x0 - border, y0 - border, x1 + border, y1 + border), fill=frame_outer)
+    draw.rectangle((x0 - 2, y0 - 2, x1 + 2, y1 + 2), fill=(18, 18, 20))
+    inner = (x0 + pad, y0 + pad, x1 - pad, y1 - pad)
+    ix0, iy0, ix1, iy1 = inner
+    iw, ih = ix1 - ix0, iy1 - iy0
 
     if img_path and img_path.exists():
         fr = _normalize_frame(frame)
         cache_key = (
             str(img_path),
-            w,
-            h,
+            iw,
+            ih,
             fr["mode"],
             round(fr["zoom"], 3),
             round(fr["x"], 3),
@@ -476,88 +482,23 @@ def _draw_panel(
             img = Image.open(img_path).convert("RGB")
             fitted = _fit_framed(
                 img,
-                w,
-                h,
+                iw,
+                ih,
                 mode=fr["mode"],
                 zoom=fr["zoom"],
                 focus_x=fr["x"],
                 focus_y=fr["y"],
+                bg=_WALL_COLOR,
             )
             fitted = _tone_panel_image(fitted, active=active, dimmed=dimmed)
             _PANEL_FIT_CACHE[cache_key] = fitted
-        canvas.paste(fitted, (x0, y0))
+        canvas.paste(fitted, (ix0, iy0))
     else:
-        draw.rectangle((x0, y0, x1, y1), fill=(55, 55, 62))
-        font = _load_font(36, bold=True)
-        tw = draw.textlength(f"Ảnh {label}", font=font)
-        draw.text(((x0 + x1 - tw) / 2, (y0 + y1) / 2 - 18), f"Ảnh {label}", font=font, fill=(200, 200, 205))
-
-    # Active: bright edge; dimmed: muted edge
-    edge_w = 6 if active else 3
-    draw.rounded_rectangle(
-        (x0 - 10, y0 - 10, x1 + 10, y1 + 20),
-        radius=20,
-        outline=rim,
-        width=edge_w,
-    )
-    if active:
-        # Inner light rim
-        draw.rounded_rectangle(
-            (x0 - 2, y0 - 2, x1 + 2, y1 + 2),
-            radius=12,
-            outline=(255, 236, 210),
-            width=3,
-        )
-
-    badge_bg = (255, 96, 64) if active else ((70, 70, 76) if not dimmed else (95, 95, 100))
-    bx0, by0 = x0 + 14, y0 + 14
-    draw.rounded_rectangle((bx0, by0, bx0 + 46, by0 + 46), radius=10, fill=badge_bg)
-    if active:
-        draw.rounded_rectangle(
-            (bx0 - 3, by0 - 3, bx0 + 49, by0 + 49),
-            radius=12,
-            outline=(255, 220, 180),
-            width=2,
-        )
-    bf = _load_font(28, bold=True)
-    draw.text((bx0 + 14, by0 + 6), label, font=bf, fill=(255, 255, 255))
-
-    note = (caption or "").strip()
-    if note:
-        cf = _load_font(28, bold=True)
-        words = note.split()
-        lines: list[str] = []
-        cur = ""
-        max_w = w - 28
-        for word in words:
-            trial = f"{cur} {word}".strip()
-            if draw.textlength(trial, font=cf) <= max_w:
-                cur = trial
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = word
-        if cur:
-            lines.append(cur)
-        lines = lines[:3]
-        pad = 10
-        line_h = 34
-        box_h = pad * 2 + line_h * len(lines)
-        by1 = y1 - 8
-        by0c = by1 - box_h
-        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        od = ImageDraw.Draw(overlay)
-        note_alpha = 200 if active else (150 if not dimmed else 120)
-        od.rounded_rectangle((x0 + 8, by0c, x1 - 8, by1), radius=12, fill=(0, 0, 0, note_alpha))
-        composited = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
-        canvas.paste(composited)
-        draw = ImageDraw.Draw(canvas)
-        ty = by0c + pad
-        note_color = (255, 255, 255) if not dimmed else (210, 210, 214)
-        for line in lines:
-            tw = draw.textlength(line, font=cf)
-            draw.text(((x0 + x1 - tw) / 2, ty), line, font=cf, fill=note_color)
-            ty += line_h
+        draw.rectangle(inner, fill=(200, 220, 216))
+        font = _load_font(32, bold=True)
+        placeholder = "Ảnh trái" if side == "left" else "Ảnh phải"
+        tw = draw.textlength(placeholder, font=font)
+        draw.text(((ix0 + ix1 - tw) / 2, (iy0 + iy1) / 2 - 18), placeholder, font=font, fill=(90, 110, 108))
 
 
 def _paste_character_center(
@@ -581,12 +522,13 @@ def _paste_character_center(
     # Mouth lip-sync disabled — paste sprite as-is (no overlay)
     _ = mouth
     base = canvas.convert("RGBA")
+    floor_top = _floor_top()
     x = (VIDEO_WIDTH - char.width) // 2 + sway
-    y = VIDEO_HEIGHT - char.height + 16 - bob
+    y = floor_top - char.height + 8 - bob
     if target == POSE_POINT_1:
-        x -= 36
+        x -= 40
     elif target == POSE_POINT_2:
-        x += 36
+        x += 40
     base.alpha_composite(char, (x, y))
     return base.convert("RGB")
 
@@ -640,18 +582,53 @@ def _karaoke_chunk(cues: list[dict], t: float, max_words: int = 7) -> tuple[list
     return last, len(last) - 1
 
 
+def _draw_panel_titles(
+    draw: ImageDraw.ImageDraw,
+    left_box: tuple[int, int, int, int],
+    right_box: tuple[int, int, int, int],
+    caption_1: str,
+    caption_2: str,
+) -> None:
+    title_font = _load_font(46, bold=True)
+    # Gap between bottom of title text and top of image frame
+    title_gap = 24
+    title_y = left_box[1] - title_gap - 46
+    left_cx = (left_box[0] + left_box[2]) / 2
+    right_cx = (right_box[0] + right_box[2]) / 2
+    if (caption_1 or "").strip():
+        _draw_text_stroked_center(
+            draw,
+            left_cx,
+            title_y,
+            caption_1.strip(),
+            title_font,
+            _TITLE_GREEN,
+            stroke_width=3,
+        )
+    if (caption_2 or "").strip():
+        _draw_text_stroked_center(
+            draw,
+            right_cx,
+            title_y,
+            caption_2.strip(),
+            title_font,
+            _TITLE_RED,
+            stroke_width=3,
+        )
+
+
 def _draw_karaoke_light(
     draw: ImageDraw.ImageDraw,
     cues_window: list[dict],
     active_local: int,
     y_base: int,
 ) -> None:
-    """Segment karaoke: full chunk visible first; spoken words turn red. No underline."""
+    """Floor subtitles: spoken words white, current word green, black stroke."""
     if not cues_window:
         return
-    font = _load_font(52, bold=True)
-    gap = 16
-    max_w = VIDEO_WIDTH - 140
+    font = _load_font(50, bold=True)
+    gap = 14
+    max_w = VIDEO_WIDTH - 100
 
     lines: list[list[tuple[dict, int]]] = [[]]
     line_w = 0
@@ -665,46 +642,19 @@ def _draw_karaoke_light(
         lines[-1].append((c, i))
         line_w += extra + w
 
-    line_h = 70
-    total_h = line_h * len(lines) + 28
-    max_line_w = 0
-    for line in lines:
-        lw = sum(draw.textlength(c["text"], font=font) for c, _ in line) + gap * max(0, len(line) - 1)
-        max_line_w = max(max_line_w, lw)
-
-    pill_w = min(VIDEO_WIDTH - 72, max_line_w + 72)
-    pill_x0 = (VIDEO_WIDTH - pill_w) / 2
-    pill_y0 = y_base - 10
-    pill_y1 = pill_y0 + total_h
-    draw.rounded_rectangle(
-        (pill_x0 + 3, pill_y0 + 5, pill_x0 + pill_w + 3, pill_y1 + 5),
-        radius=28,
-        fill=(215, 215, 222),
-    )
-    draw.rounded_rectangle(
-        (pill_x0, pill_y0, pill_x0 + pill_w, pill_y1),
-        radius=28,
-        fill=(255, 255, 255),
-    )
-    draw.rounded_rectangle(
-        (pill_x0, pill_y0, pill_x0 + pill_w, pill_y1),
-        radius=28,
-        outline=(236, 236, 240),
-        width=2,
-    )
-
-    y = pill_y0 + 20
+    line_h = 62
+    y = y_base
     for line in lines:
         lw = sum(draw.textlength(c["text"], font=font) for c, _ in line) + gap * max(0, len(line) - 1)
         x = (VIDEO_WIDTH - lw) / 2
         for c, i in line:
             word = c["text"]
             ww = draw.textlength(word, font=font)
-            if active_local >= 0 and i <= active_local:
-                color = (220, 40, 36)  # spoken / current → red
+            if active_local >= 0 and i == active_local:
+                color = _KARAOKE_ACTIVE
             else:
-                color = (72, 72, 80)  # upcoming → visible dark gray
-            draw.text((x, y), word, font=font, fill=color)
+                color = _KARAOKE_SPOKEN
+            _draw_text_stroked(draw, (x, y), word, font, color, stroke_width=3)
             x += ww + gap
         y += line_h
 
@@ -727,21 +677,22 @@ def _make_compare_frame(
     frame_2: dict | None = None,
     layer_cache: dict[str, Image.Image] | None = None,
 ) -> Image.Image:
-    margin = 72
+    margin = 48
     gap = 28
     panel_w = (VIDEO_WIDTH - margin * 2 - gap) // 2
-    panel_h = int(VIDEO_HEIGHT * 0.34)
-    top = 92
+    panel_h = int(VIDEO_HEIGHT * 0.26)
+    top = 118
     left_box = (margin, top, margin + panel_w, top + panel_h)
     right_box = (margin + panel_w + gap, top, margin + panel_w + gap + panel_w, top + panel_h)
-    y_sub = top + panel_h + 90
+    floor_band = VIDEO_HEIGHT - _floor_top()
+    y_sub = _floor_top() + int(floor_band * 0.52) - 24
 
-    # Cache static base (bg + panels) per pointing target + bg phase
-    phase = int((max(0.0, t) * 2.2) % 6)
-    cache_key = f"{target}:{phase}"
+    cache_key = f"{target}:classroom:{caption_1}:{caption_2}"
     base = layer_cache.get(cache_key) if layer_cache is not None else None
     if base is None:
         canvas = _paper_bg(t=t, focus=target)
+        draw_titles = ImageDraw.Draw(canvas)
+        _draw_panel_titles(draw_titles, left_box, right_box, caption_1, caption_2)
         spotlight = target in {POSE_POINT_1, POSE_POINT_2}
         _draw_panel(
             canvas,
@@ -753,6 +704,7 @@ def _make_compare_frame(
             frame=frame_1,
             dimmed=spotlight and target != POSE_POINT_1,
             t=t,
+            side="left",
         )
         _draw_panel(
             canvas,
@@ -764,14 +716,17 @@ def _make_compare_frame(
             frame=frame_2,
             dimmed=spotlight and target != POSE_POINT_2,
             t=t,
+            side="right",
         )
         if brand_name.strip() and not clean_export:
             draw0 = ImageDraw.Draw(canvas)
-            draw0.text(
-                (40, 24),
+            _draw_text_stroked(
+                draw0,
+                (36, 28),
                 brand_name.strip(),
-                font=_load_font(26, bold=True),
-                fill=(100, 100, 110),
+                _load_font(26, bold=True),
+                (80, 100, 96),
+                stroke_width=2,
             )
         if layer_cache is not None:
             layer_cache[cache_key] = canvas.copy()
@@ -803,9 +758,8 @@ def _make_compare_frame(
             lines.append(cur)
         y = y_sub
         for line in lines[:3]:
-            tw = draw.textlength(line, font=font)
-            draw.text(((VIDEO_WIDTH - tw) / 2, y), line, font=font, fill=(35, 35, 40))
-            y += 60
+            _draw_text_stroked_center(draw, VIDEO_WIDTH / 2, y, line, font, _KARAOKE_SPOKEN, stroke_width=3)
+            y += 58
 
     # Soft idle motion only — mouth lip-sync off
     sway = sway_offset(t, False, target, mouth=0.0)
@@ -1382,6 +1336,7 @@ async def render_project(
         "character": character_id,
         "auto_pose": auto_pose,
         "layout": layout,
+        "layout_style": RENDER_STYLE,
         "speed": speed,
         "fps": fps,
     }
@@ -1391,6 +1346,7 @@ async def render_project(
     project["duration_sec"] = round(total_duration, 3)
     project["output_file"] = output_mp4.name
     project["base_file"] = base_mp4.name
+    project["layout_style"] = RENDER_STYLE
     _clear_render_caches()
     report(99, "Sắp xong…")
     return output_mp4

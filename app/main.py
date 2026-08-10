@@ -15,7 +15,7 @@ from app.services import characters as character_store
 from app.services import facebook as facebook_store
 from app.services import projects as project_store
 from app.services import sfx as sfx_store
-from app.services.renderer import RenderCancelled, apply_sfx_export, render_project
+from app.services.renderer import RenderCancelled, apply_sfx_export, render_project, RENDER_STYLE
 from app.services.script_parser import list_script_segments, parse_script
 
 ensure_dirs()
@@ -163,6 +163,7 @@ async def project_page(request: Request, project_id: str):
         sfx_list=sfx_store.list_sfx(),
         timeline_duration=duration,
         facebook=fb,
+        render_style=RENDER_STYLE,
     )
 
 
@@ -688,6 +689,8 @@ async def _run_render(project_id: str) -> None:
         if manifest_path.exists():
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             project["duration_sec"] = manifest.get("duration_sec", project.get("duration_sec"))
+            if manifest.get("layout_style"):
+                project["layout_style"] = manifest.get("layout_style")
         project["status"] = "ready"
         project["output_file"] = out.name
         project["base_file"] = "video_base.mp4"

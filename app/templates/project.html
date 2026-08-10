@@ -120,12 +120,12 @@
               </div>
               <div class="row wrap">
                 <label class="field grow">
-                  <span>Ghi chú trái</span>
-                  <input type="text" class="seg-cap1" data-seg="{{ si }}" value="{{ sc.caption_1 or '' }}" maxlength="60" placeholder="Tuỳ chọn" />
+                  <span>Tiêu đề trái (trên ảnh)</span>
+                  <input type="text" class="seg-cap1" data-seg="{{ si }}" value="{{ sc.caption_1 or '' }}" maxlength="60" placeholder="Võ Nguyên Giáp (1911 - 2013)" />
                 </label>
                 <label class="field grow">
-                  <span>Ghi chú phải</span>
-                  <input type="text" class="seg-cap2" data-seg="{{ si }}" value="{{ sc.caption_2 or '' }}" maxlength="60" placeholder="Tuỳ chọn" />
+                  <span>Tiêu đề phải (trên ảnh)</span>
+                  <input type="text" class="seg-cap2" data-seg="{{ si }}" value="{{ sc.caption_2 or '' }}" maxlength="60" placeholder="Lê Trọng Tấn (1914 - 1986)" />
                 </label>
               </div>
               {% set iframes = project.image_frames or {} %}
@@ -473,6 +473,12 @@
         <li>✓ Nhân vật: {{ project.character_id }}</li>
         <li>○ SFX thêm sau ở timeline</li>
       </ul>
+      {% if project.output_file and (not project.layout_style or project.layout_style != render_style) %}
+      <p class="hint layout-stale-hint">
+        Video hiện tại là <strong>layout cũ</strong> (studio vàng).
+        Bấm <strong>Render video 9:16</strong> lại để dùng layout mới (nền mint + sàn nâu + tiêu đề trên ảnh).
+      </p>
+      {% endif %}
       <form method="post" action="/projects/{{ project.id }}/render" id="render-form" class="row wrap">
         <button type="submit" class="btn primary" id="render-btn"
           {% if project.status in ['queued', 'rendering', 'paused'] %}disabled{% endif %}>

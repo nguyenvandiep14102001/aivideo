@@ -306,6 +306,13 @@ code {
   color: var(--ink);
 }
 .hint { color: var(--muted); font-size: 0.9rem; margin: 0 0 0.8rem; line-height: 1.45; }
+.layout-stale-hint {
+  padding: 0.55rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(255, 180, 60, 0.14);
+  border: 1px solid rgba(255, 140, 40, 0.35);
+  color: var(--text);
+}
 
 .field {
   display: grid;
